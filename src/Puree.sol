@@ -170,13 +170,13 @@ contract Puree {
     function repayFull(uint256 id) external {
         LoanData storage loan = loanData[id];
 
-        uint256 debt = calcInterest(loan.time, loan.debt);
+        uint256 debt = calcInterest(loan.time, loan.debt, loan.terms.interestRateBips);
 
         weth.safeTransferFrom(msg.sender, loan.terms.lender, debt);
 
-        loan.nft.safeTransferFrom(address(this), loan.borrower, loan.nftId);
+        loan.terms.nft.safeTransferFrom(address(this), loan.borrower, loan.nftId);
 
-        delete loanData;
+        delete loanData[id];
     }
 
     function instantRefinance(uint256 id, LoanTerms calldata terms2) external {
@@ -198,7 +198,7 @@ contract Puree {
         require(terms2.interestRateBips <= loan.terms.interestRateBips, "INTEREST_RATE_UNFAVORABLE");
 
         // TODO: is it safe to pay them pay arbitrary debt
-        uint256 debt = calcInterest(loan.time, loan.debt);
+        uint256 debt = calcInterest(loan.time, loan.debt, loan.terms.interestRateBips);
         weth.safeTransferFrom(terms2.lender, loan.terms.lender, debt);
 
         loan.terms = terms2;
@@ -206,7 +206,7 @@ contract Puree {
 
     function kickoffRefinancingAuction(uint256 id) external {
         // only lender
-        require(msg.sender == loanData[id].lender, "NOT_LENDER");
+        require(msg.sender == loanData[id].terms.lender, "NOT_LENDER");
 
         require(auctionStartTime[id] == 0, "NO_ACTIVE_AUCTION");
 
@@ -220,7 +220,7 @@ contract Puree {
 
         LoanData storage loan = loanData[id];
 
-        uint256 r = calcAuctionRate(start, loan.liquidationDurationBlocks);
+        uint256 r = calcAuctionRate(start, loan.terms.liquidationDurationBlocks);
 
         require(r < LIQ_THRESHOLD, "INSOLVENT");
 
@@ -276,7 +276,7 @@ contract Puree {
         return 0x0; // todo
     }
 
-    function calcInterest(uint40 time, uint32 bips) internal returns (uint256) {
+    function calcInterest(uint40 time, uint96 debt, uint32 bips) internal returns (uint256) {
         return 0; // TODO
     }
 
