@@ -220,7 +220,7 @@ contract Puree {
 
         LoanData storage loan = loanData[id];
 
-        uint256 r = calcAuctionRate(start, loan.terms.liquidationDurationBlocks);
+        uint256 r = calcAuctionRate(uint40(start), loan.terms.liquidationDurationBlocks);
 
         require(r < LIQ_THRESHOLD, "INSOLVENT");
 
@@ -238,7 +238,7 @@ contract Puree {
         require(terms2.interestRateBips <= r, "INTEREST_RATE_UNFAVORABLE");
 
         // buy out the prev lender
-        uint256 debt = calcInterest(loan.time, loan.debt);
+        uint256 debt = calcInterest(loan.time, loan.debt, loan.terms.interestRateBips);
         weth.safeTransferFrom(terms2.lender, loan.terms.lender, debt);
 
         loan.terms = terms2;
@@ -251,36 +251,36 @@ contract Puree {
 
         require(start > 0, "NO_ACTIVE_AUCTION");
 
-        uint256 r = calcAuctionRate(start, loan.liquidationDurationBlocks);
+        uint256 r = calcAuctionRate(uint40(start), loan.terms.liquidationDurationBlocks);
 
         if (r > LIQ_THRESHOLD) {
             delete auctionStartTime[id];
 
-            loan.nft.safeTransferFrom(address(this), loan.terms.lender, loan.nftId);
+            loan.terms.nft.safeTransferFrom(address(this), loan.terms.lender, loan.nftId);
 
             delete loanData[id];
         }
     }
 
-    function checkTermsNotExpired(LoanTerms calldata terms) internal returns (bool) {
+    function checkTermsNotExpired(LoanTerms calldata terms) internal view returns (bool) {
         return terms.deadline >= block.timestamp && terms.nonce <= nonce[terms.lender];
     }
 
-    function checkTermsFavorable(LoanTerms calldata terms1, LoanTerms calldata terms2) internal returns (bool) {
+    function checkTermsFavorable(LoanTerms calldata terms1, LoanTerms calldata terms2) internal view returns (bool) {
         return terms2.nft == terms1.nft && terms2.minAmount >= terms1.minAmount
             && terms2.liquidationDurationBlocks >= terms1.liquidationDurationBlocks
             && terms2.interestRateBips <= terms1.interestRateBips;
     }
 
-    function hashLoamTerms(LoanTerms calldata loan) internal returns (bytes32) {
+    function hashLoamTerms(LoanTerms calldata loan) internal view returns (bytes32) {
         return 0x0; // todo
     }
 
-    function calcInterest(uint40 time, uint96 debt, uint32 bips) internal returns (uint256) {
+    function calcInterest(uint40 time, uint96 debt, uint32 bips) internal view returns (uint256) {
         return 0; // TODO
     }
 
-    function calcAuctionRate(uint40 time, uint32 durBlocks) internal returns (uint256) {
+    function calcAuctionRate(uint40 time, uint32 durBlocks) internal view returns (uint256) {
         return 0; // TODO
     }
 }
