@@ -2,7 +2,7 @@
 pragma solidity 0.8.19;
 
 import "solmate/tokens/ERC721.sol";
-import "solmate/tokens/WETH.sol";
+import "solmate/tokens/ERC20.sol";
 import "solmate/utils/SafeTransferLib.sol";
 
 // Blend: Peer-to-Peer Perpetual Lending With Arbitrary Collateral
@@ -113,21 +113,17 @@ struct LoanData {
 // todo: replay and what to do with closed loans
 
 contract Puree {
-    using SafeTransferLib for WETH;
+    using SafeTransferLib for ERC20;
 
     uint256 LIQ_THRESHOLD = 1000000; // todo
 
-    WETH internal weth;
+    ERC20 internal weth;
 
-    constructor(WETH _weth) {
+    constructor(ERC20 _weth) {
         weth = _weth;
     }
 
-    function tokenURI(uint256 id) public view override returns (string memory) {
-        return ""; // TODO
-    }
-
-    mapping(uint256 => LoanTerms) loanData;
+    mapping(uint256 => LoanData) loanData;
 
     mapping(uint256 => uint256) auctionStartTime;
 
@@ -139,11 +135,11 @@ contract Puree {
         nonce[msg.sender] += n;
     }
 
-    function borrow(LoanTerms calldata terms, uint256 nftId, uint256 amt) external {
+    function borrow(LoanTerms calldata terms, uint256 nftId, uint96 amt) external {
         // TODO: validate signature
 
         // Take the borrower's collateral NFT and keep it in the Puree contract for safe keeping.
-        terms.nft.transferFrom(msg.sender, address(this), nftId);
+        terms.nft.safeTransferFrom(msg.sender, address(this), nftId);
 
         // Ensure the amount fits within the lender's terms.
         require(amt <= terms.maxAmount && amt >= terms.minAmount, "INVALID_AMOUNT");
@@ -154,20 +150,20 @@ contract Puree {
         weth.safeTransferFrom(terms.lender, msg.sender, amt);
 
         // Store the loan data.
-        loanData[loanId++] = LoanData(terms, msg.sender, nftId, amt, block.timestamp);
+        loanData[loanId++] = LoanData(terms, msg.sender, nftId, amt, uint40(block.timestamp));
     }
 
     function repay(uint256 id, uint96 amt) external {
         LoanData storage loan = loanData[id];
 
-        weth.safeTransferFrom(msg.sender, loan.lender, amt);
+        weth.safeTransferFrom(msg.sender, loan.terms.lender, amt);
 
         loan.debt -= amt;
 
         if (loan.debt < loan.terms.minAmount) {
-            loan.nft.transferFrom(address(this), loan.borrower, loan.nftId);
+            loan.terms.nft.safeTransferFrom(address(this), loan.borrower, loan.nftId);
 
-            delete loanData;
+            delete loanData[id];
         }
     }
 
@@ -178,12 +174,12 @@ contract Puree {
 
         weth.safeTransferFrom(msg.sender, loan.terms.lender, debt);
 
-        loan.nft.transferFrom(address(this), loan.borrower, loan.nftId);
+        loan.nft.safeTransferFrom(address(this), loan.borrower, loan.nftId);
 
         delete loanData;
     }
 
-    function instantRefinance(uint256 id, LoanTerms terms2) external {
+    function instantRefinance(uint256 id, LoanTerms calldata terms2) external {
         LoanData storage loan = loanData[id];
 
         // only lender
@@ -260,7 +256,7 @@ contract Puree {
         if (r > LIQ_THRESHOLD) {
             delete auctionStartTime[id];
 
-            loan.nft.transferFrom(address(this), loan.terms.lender, loan.nftId);
+            loan.nft.safeTransferFrom(address(this), loan.terms.lender, loan.nftId);
 
             delete loanData[id];
         }
