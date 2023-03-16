@@ -110,6 +110,8 @@ struct LoanData {
     uint40 time; // first borrow time
 }
 
+// todo: replay and what to do with closed loans
+
 contract Puree {
     using SafeTransferLib for WETH;
 
@@ -133,11 +135,15 @@ contract Puree {
 
     uint256 loanId;
 
+    function bumpNonce(uint256 n) external {
+        nonce[msg.sender] += n;
+    }
+
     function borrow(LoanTerms calldata terms, uint256 nftId, uint256 amt) external {
         // TODO: validate signature
 
         // Take the borrower's collateral NFT and keep it in the Puree contract for safe keeping.
-        loan.nft.transferFrom(msg.sender, address(this), nftId);
+        terms.nft.transferFrom(msg.sender, address(this), nftId);
 
         // Ensure the amount fits within the lender's terms.
         require(amt <= terms.maxAmount && amt >= terms.minAmount, "INVALID_AMOUNT");
@@ -154,11 +160,17 @@ contract Puree {
     }
 
     function repay(uint256 id, uint96 amt) external {
+        LoanData storage loan = loanData[id];
+
         weth.safeTransferFrom(msg.sender, loan.lender, amt);
 
-        if (amt < minAmount) {} // TODO
+        loan.debt -= amt;
 
-        loanData[id].debt -= amt; // TODO not handling interest properly
+        if (loan.debt < loan.terms.minAmount) {
+            loan.nft.transferFrom(address(this), loan.borrower, loan.nftId);
+
+            delete loanData;
+        }
     }
 
     function repayFull(uint256 id) external {
@@ -176,12 +188,14 @@ contract Puree {
     function instantRefinance(uint256 id, LoanTerms terms2) external {
         LoanData storage loan = loanData[id];
 
+        require(msg.sender == loan.terms.lender);
+
         // TODO: functionize
         require(terms2.deadline >= block.timestamp);
-        require(terms2.nonce <= nonce[terms.lender]);
+        require(terms2.nonce <= nonce[loan.terms.lender]);
 
         // same
-        require(terms2.nft == terms1.nft);
+        require(terms2.nft == laon.terms.nft);
 
         // favorable
         require(terms2.minAmount >= loan.terms.minAmount);
@@ -194,18 +208,41 @@ contract Puree {
         weth.safeTransferFrom(terms2.lender, loan.terms.lender, debt);
 
         loan.terms = terms2;
-
-        // TODO: update interest data?
     }
 
-    function kickoffRefinancingAuction(uint256 id) {
+    function kickoffRefinancingAuction(uint256 id) external {
         require(msg.sender == loanData[id].lender);
+
+        require(auctionStartTime[id] == 0);
 
         auctionStartTime[id] = block.timestamp;
     }
 
     function auctionRefinance(uint256 id, LoanTerms terms2) external {
         uint256 r = calcAuctionRate;
+
+        LoanData storage loan = loanData[id];
+
+        require(r < LIQ_THRESHOLD);
+
+        require(terms2.deadline >= block.timestamp);
+
+        require(terms2.nonce <= nonce[loan.terms.lender]);
+
+        // same
+        require(terms2.nft == loan.terms.nft);
+
+        // favorable
+        require(terms2.minAmount >= loan.terms.minAmount);
+        require(terms2.liquidationDurationBlocks >= loan.terms.liquidationDurationBlocks);
+
+        require(terms2.interestRateBips <= r);
+
+        // buy out the prev lender
+        uint256 debt = calcInterest(loan.time, loan.debt);
+        weth.safeTransferFrom(terms2.lender, loan.terms.lender, debt);
+
+        loan.terms = terms2;
     }
 
     function liquidate(uint256 id) external {
@@ -221,6 +258,8 @@ contract Puree {
             delete auctionStartTime[id];
 
             loan.nft.transferFrom(address(this), loan.terms.lender, loan.nftId);
+
+            delete loanData[id];
         }
     }
 }
