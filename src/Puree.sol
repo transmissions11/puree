@@ -43,20 +43,30 @@ contract Puree {
 
     mapping(uint256 => LoanTerms) loanData;
 
+    mapping(uint256 => uint256) auctionStartTime;
+
+    mapping(address => uint256) nonce;
+
     uint256 loanId;
 
-    function borrow(LoanTerms calldata loan, uint256 nftId, uint256 amt) external {
+    function borrow(LoanTerms calldata terms, uint256 nftId, uint256 amt) external {
+        // TODO: validate signature
+
         // Take the borrower's collateral NFT and keep it in the Puree contract for safe keeping.
         loan.nft.transferFrom(msg.sender, address(this), nftId);
 
         // Ensure the amount fits within the lender's terms.
-        require(amt <= loan.maxAmount && amt >= loan.minAmount, "INVALID_AMOUNT");
+        require(amt <= terms.maxAmount && amt >= terms.minAmount, "INVALID_AMOUNT");
+
+        // TODO: functionize
+        require(terms.deadline >= block.timestamp);
+        require(terms.nonce <= nonce[terms.lender]);
 
         // Give the borrower the amount of collateral they've requested.
-        weth.safeTransferFrom(loan.lender, msg.sender, amt);
+        weth.safeTransferFrom(terms.lender, msg.sender, amt);
 
         // Store the loan data.
-        loanData[loanId++] = LoanData(loan, msg.sender, nftId, amt, block.timestamp);
+        loanData[loanId++] = LoanData(terms, msg.sender, nftId, amt, block.timestamp);
     }
 
     function repay(uint256 id, uint96 amt) external {
@@ -68,7 +78,9 @@ contract Puree {
     }
 
     function repayFull(uint256 id) external {
-        uint256 debt = calcInterest(loanData[id].time, loanData[id].debt);
+        LoanData storage loan = loanData[id];
+
+        uint256 debt = calcInterest(loan.time, loan.debt);
 
         weth.safeTransferFrom(msg.sender, loan.terms.lender, debt);
 
@@ -77,15 +89,40 @@ contract Puree {
         delete loanData;
     }
 
-    function repayFull(uint256 id) external {
-        uint256 debt = calcInterest(loanData[id].time, loanData[id].debt);
+    function instantRefinance(uint256 id, LoanTerms terms2) external {
+        LoanData storage loan = loanData[id];
 
-        weth.safeTransferFrom(msg.sender, loan.terms.lender, debt);
+        // TODO: functionize
+        require(terms2.deadline >= block.timestamp);
+        require(terms2.nonce <= nonce[terms.lender]);
 
-        loan.nft.transferFrom(address(this), loan.borrower, loan.nftId);
+        // same
+        require(terms2.nft == terms1.nft);
 
-        delete loanData;
+        // favorable
+        require(terms2.minAmount >= loan.terms.minAmount);
+        require(terms2.liquidationDurationBlocks >= loan.terms.liquidationDurationBlocks);
+        require(terms2.interestRateBips <= loan.terms.interestRateBips);
+
+        // TODO: buy out the previous lender lol
+        // TODO: is it safe to pay them pay arbitrary debt
+        uint256 debt = calcInterest(loan.time, loan.debt);
+        weth.safeTransferFrom(terms2.lender, loan.terms.lender, debt);
+
+        loan.terms = terms2;
+
+        // TODO: update interest data?
     }
+
+    function kickoffRefinancingAuction(uint256 id) {
+        require(msg.sender == loanData[id].lender);
+
+        auctionStartTime[id] = block.timestamp;
+    }
+
+    function auctionRefinance(uint256 id, LoanTerms terms2) external {}
+
+    function liquidate(uint256 id) external {}
 }
 
 function hashLoamTerms(LoanTerms calldata loan) returns (bytes32) {
