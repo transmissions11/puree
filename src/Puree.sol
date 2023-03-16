@@ -148,9 +148,7 @@ contract Puree {
         // Ensure the amount fits within the lender's terms.
         require(amt <= terms.maxAmount && amt >= terms.minAmount, "INVALID_AMOUNT");
 
-        // TODO: functionize
-        require(terms.deadline >= block.timestamp);
-        require(terms.nonce <= nonce[terms.lender]);
+        require(checkTermsNotExpired(terms), "TERMS_EXPIRED");
 
         // Give the borrower the amount of collateral they've requested.
         weth.safeTransferFrom(terms.lender, msg.sender, amt);
@@ -188,21 +186,21 @@ contract Puree {
     function instantRefinance(uint256 id, LoanTerms terms2) external {
         LoanData storage loan = loanData[id];
 
-        require(msg.sender == loan.terms.lender);
+        // only lender
+        require(msg.sender == loan.terms.lender, "NOT_LENDER");
 
-        // TODO: functionize
-        require(terms2.deadline >= block.timestamp);
-        require(terms2.nonce <= nonce[loan.terms.lender]);
+        require(checkTermsNotExpired(terms2), "TERMS_EXPIRED");
 
         // same
-        require(terms2.nft == laon.terms.nft);
+        require(terms2.nft == loan.terms.nft, "DIFFERENT_NFT");
 
         // favorable
-        require(terms2.minAmount >= loan.terms.minAmount);
-        require(terms2.liquidationDurationBlocks >= loan.terms.liquidationDurationBlocks);
-        require(terms2.interestRateBips <= loan.terms.interestRateBips);
+        require(terms2.minAmount >= loan.terms.minAmount, "MIN_AMOUNT_UNFAVORABLE");
+        require(
+            terms2.liquidationDurationBlocks >= loan.terms.liquidationDurationBlocks, "LIQUIDATION_DURATION_UNFAVORABLE"
+        );
+        require(terms2.interestRateBips <= loan.terms.interestRateBips, "INTEREST_RATE_UNFAVORABLE");
 
-        // TODO: buy out the previous lender lol
         // TODO: is it safe to pay them pay arbitrary debt
         uint256 debt = calcInterest(loan.time, loan.debt);
         weth.safeTransferFrom(terms2.lender, loan.terms.lender, debt);
@@ -211,32 +209,37 @@ contract Puree {
     }
 
     function kickoffRefinancingAuction(uint256 id) external {
-        require(msg.sender == loanData[id].lender);
+        // only lender
+        require(msg.sender == loanData[id].lender, "NOT_LENDER");
 
-        require(auctionStartTime[id] == 0);
+        require(auctionStartTime[id] == 0, "NO_ACTIVE_AUCTION");
 
         auctionStartTime[id] = block.timestamp;
     }
 
-    function auctionRefinance(uint256 id, LoanTerms terms2) external {
-        uint256 r = calcAuctionRate;
+    function auctionRefinance(uint256 id, LoanTerms calldata terms2) external {
+        uint256 start = auctionStartTime[id];
+
+        require(start > 0, "NO_ACTIVE_AUCTION");
 
         LoanData storage loan = loanData[id];
 
-        require(r < LIQ_THRESHOLD);
+        uint256 r = calcAuctionRate(start, loan.liquidationDurationBlocks);
 
-        require(terms2.deadline >= block.timestamp);
+        require(r < LIQ_THRESHOLD, "INSOLVENT");
 
-        require(terms2.nonce <= nonce[loan.terms.lender]);
+        require(checkTermsNotExpired(terms2), "TERMS_EXPIRED");
 
         // same
-        require(terms2.nft == loan.terms.nft);
+        require(terms2.nft == loan.terms.nft, "DIFFERENT_NFT");
 
         // favorable
-        require(terms2.minAmount >= loan.terms.minAmount);
-        require(terms2.liquidationDurationBlocks >= loan.terms.liquidationDurationBlocks);
+        require(terms2.minAmount >= loan.terms.minAmount, "MIN_AMOUNT_UNFAVORABLE");
+        require(
+            terms2.liquidationDurationBlocks >= loan.terms.liquidationDurationBlocks, "LIQUIDATION_DURATION_UNFAVORABLE"
+        );
 
-        require(terms2.interestRateBips <= r);
+        require(terms2.interestRateBips <= r, "INTEREST_RATE_UNFAVORABLE");
 
         // buy out the prev lender
         uint256 debt = calcInterest(loan.time, loan.debt);
@@ -250,7 +253,7 @@ contract Puree {
 
         uint256 start = auctionStartTime[id];
 
-        require(start > 0);
+        require(start > 0, "NO_ACTIVE_AUCTION");
 
         uint256 r = calcAuctionRate(start, loan.liquidationDurationBlocks);
 
@@ -262,16 +265,26 @@ contract Puree {
             delete loanData[id];
         }
     }
-}
 
-function hashLoamTerms(LoanTerms calldata loan) returns (bytes32) {
-    return 0x0; // todo
-}
+    function checkTermsNotExpired(LoanTerms calldata terms) internal returns (bool) {
+        return terms.deadline >= block.timestamp && terms.nonce <= nonce[terms.lender];
+    }
 
-function calcInterest(uint40 time, uint32 bips) returns (uint256) {
-    return 0; // TODO
-}
+    function checkTermsFavorable(LoanTerms calldata terms1, LoanTerms calldata terms2) internal returns (bool) {
+        return terms2.nft == terms1.nft && terms2.minAmount >= terms1.minAmount
+            && terms2.liquidationDurationBlocks >= terms1.liquidationDurationBlocks
+            && terms2.interestRateBips <= terms1.interestRateBips;
+    }
 
-function calcAuctionRate(uint40 time, uint32 durBlocks) returns (uint256) {
-    return 0; // TODO
+    function hashLoamTerms(LoanTerms calldata loan) internal returns (bytes32) {
+        return 0x0; // todo
+    }
+
+    function calcInterest(uint40 time, uint32 bips) internal returns (uint256) {
+        return 0; // TODO
+    }
+
+    function calcAuctionRate(uint40 time, uint32 durBlocks) internal returns (uint256) {
+        return 0; // TODO
+    }
 }
