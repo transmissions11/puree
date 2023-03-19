@@ -4,6 +4,7 @@ pragma solidity 0.8.19;
 import "solmate/tokens/ERC721.sol";
 import "solmate/tokens/ERC20.sol";
 import "solmate/utils/SafeTransferLib.sol";
+import "solmate/utils/SignedWadMath.sol";
 
 // Blend: Peer-to-Peer Perpetual Lending With Arbitrary Collateral
 // Galaga, Pacman, Dan Robinson
@@ -110,8 +111,6 @@ struct BorrowData {
     uint40 lastTouchedTime;
 }
 
-// todo: replay and what to do with closed loans
-
 contract Puree {
     using SafeTransferLib for ERC20;
 
@@ -119,7 +118,7 @@ contract Puree {
                                 CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    uint256 LIQ_THRESHOLD = 1000000; // todo
+    uint256 internal constant LIQ_THRESHOLD = 100_000e18; // TODO
 
     ERC20 internal immutable weth;
 
@@ -254,7 +253,6 @@ contract Puree {
                             REFINANCING LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    // TODO: Are we sure this is safe for the lender to kickoff without the new terms guy agreeing?
     function instantRefinance(bytes32 borrowHash, bytes32 newTermsHash) external {
         // Get the borrow data associated with the hash.
         BorrowData storage borrowData = getBorrowData[borrowHash];
@@ -419,11 +417,11 @@ contract Puree {
     //////////////////////////////////////////////////////////////*/
 
     function hashLoanTerms(LoanTerms memory l) internal view returns (bytes32) {
-        return 0x0; // todo
+        return keccak256(abi.encode(l));
     }
 
     function hashBorrowData(BorrowData memory b) internal view returns (bytes32) {
-        return 0x0; // todo
+        return keccak256(abi.encode(b));
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -435,7 +433,7 @@ contract Puree {
         view
         returns (uint256)
     {
-        return 0; // TODO
+        return 0;
     }
 
     function calcAuctionRate(uint40 time, uint32 durBlocks) internal view returns (uint256) {
