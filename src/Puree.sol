@@ -100,7 +100,7 @@ struct LoanTerms {
     uint32 interestRateBips;
     ///////////////////////
     uint40 deadline;
-    uint32 getNonce;
+    uint32 nonce;
 }
 
 struct BorrowData {
@@ -153,12 +153,27 @@ contract Puree {
     }
 
     /*//////////////////////////////////////////////////////////////
+                               TERMS LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    function submitTerms(LoanTerms calldata terms, uint8 v, bytes32 r, bytes32 s) external {
+        bytes32 termsHash = hashLoanTerms(terms);
+
+        // verify signature
+        require(ecrecover(termsHash, v, r, s) == terms.lender, "INVALID_SIGNATURE");
+
+        require(getLoanTerms[termsHash].deadline == 0, "TERMS_ALREADY_EXISTS");
+        require(terms.deadline > block.timestamp, "TERMS_EXPIRED");
+        require(terms.nonce >= getNonce[terms.lender], "INVALID_NONCE");
+
+        getLoanTerms[termsHash] = terms;
+    }
+
+    /*//////////////////////////////////////////////////////////////
                                LOAN LOGIC
     //////////////////////////////////////////////////////////////*/
 
     function borrow(bytes32 termsHash, uint256 nftId, uint96 amt) external {
-        // TODO: validate signature
-
         LoanTerms memory termsData = getLoanTerms[termsHash];
 
         //////////////////////////////////////////////////////
@@ -334,7 +349,7 @@ contract Puree {
     //////////////////////////////////////////////////////////////*/
 
     function checkTermsNotExpired(LoanTerms memory terms) internal view returns (bool) {
-        return terms.deadline >= block.timestamp && terms.getNonce <= getNonce[terms.lender];
+        return terms.deadline >= block.timestamp && terms.nonce >= getNonce[terms.lender];
     }
 
     function checkTermsFavorable(LoanTerms memory terms1, LoanTerms memory terms2) internal view returns (bool) {
