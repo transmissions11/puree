@@ -1,2 +1,6 @@
-SampleContractTest:testFunc1() (gas: 534472)
-SampleContractTest:testFunc2() (gas: 534440)
+PureeTest:testBorrow() (gas: 307874)
+PureeTest:testBorrow_invalidTerms() (gas: 133697)
+PureeTest:testBorrow_overMaxAmount() (gas: 125914)
+PureeTest:testBorrow_overTotalAmount() (gas: 401827)
+PureeTest:testBorrow_underMinAmount() (gas: 125959)
+PureeTest:testBorrow_unownedNFT() (gas: 153815)
