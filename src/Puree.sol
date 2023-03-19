@@ -202,7 +202,7 @@ contract Puree {
         getBorrowData[hashBorrowData(data)] = data; // Store the borrow data.
     }
 
-    function furtherBorrow(bytes32 borrowHash, uint256 amt) public {
+    function furtherBorrow(bytes32 borrowHash, uint256 amt) external {
         // Get the borrow data associated with the hash.
         BorrowData storage borrowData = getBorrowData[borrowHash];
 
@@ -239,7 +239,7 @@ contract Puree {
         weth.safeTransferFrom(termsData.lender, msg.sender, amt);
     }
 
-    function repay(bytes32 borrowHash, uint96 amt) public {
+    function repay(bytes32 borrowHash, uint96 amt) external {
         // Get the borrow data associated with the hash.
         BorrowData storage borrowData = getBorrowData[borrowHash];
 
