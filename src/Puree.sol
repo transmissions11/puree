@@ -122,7 +122,18 @@ contract Puree {
 
     ERC20 internal immutable weth;
 
+    /*//////////////////////////////////////////////////////////////
+                            EIP-2612 STORAGE
+    //////////////////////////////////////////////////////////////*/
+
+    uint256 internal immutable INITIAL_CHAIN_ID;
+
+    bytes32 internal immutable INITIAL_DOMAIN_SEPARATOR;
+
     constructor(ERC20 _weth) {
+        INITIAL_CHAIN_ID = block.chainid;
+        INITIAL_DOMAIN_SEPARATOR = computeDomainSeparator();
+
         weth = _weth;
     }
 
@@ -154,11 +165,40 @@ contract Puree {
                                TERMS LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    function submitTerms(LoanTerms calldata terms, uint8 v, bytes32 r, bytes32 s) external {
-        bytes32 termsHash = hashLoanTerms(terms); // Compute what the terms' hash is going to be.
+    function submitTerms(LoanTerms calldata terms, uint8 v, bytes32 r, bytes32 s) public returns (bytes32 termsHash) {
+        termsHash = hashLoanTerms(terms); // Compute what the terms' hash is going to be.
 
         // Check the lender listed in the terms has signed the hash.
-        require(ecrecover(termsHash, v, r, s) == terms.lender, "INVALID_SIGNATURE");
+        require(
+            ecrecover(
+                keccak256(
+                    abi.encodePacked(
+                        "\x19\x01",
+                        DOMAIN_SEPARATOR(),
+                        keccak256(
+                            abi.encode(
+                                keccak256(
+                                    "TermsOffer(address lender,address nft,uint96 maxAmount,uint96 minAmount,uint96 totalAmount,uint16 liquidationDurationBlocks,uint32 interestRateBips,uint40 deadline,uint32 nonce)"
+                                ),
+                                terms.lender,
+                                terms.nft,
+                                terms.maxAmount,
+                                terms.minAmount,
+                                terms.totalAmount,
+                                terms.liquidationDurationBlocks,
+                                terms.interestRateBips,
+                                terms.deadline,
+                                terms.nonce
+                            )
+                        )
+                    )
+                ),
+                v,
+                r,
+                s
+            ) == terms.lender,
+            "INVALID_SIGNATURE"
+        );
 
         // Check the terms are not already submitted.
         require(getLoanTerms[termsHash].deadline == 0, "TERMS_ALREADY_EXISTS");
@@ -173,7 +213,14 @@ contract Puree {
                                LOAN LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    function newBorrow(bytes32 termsHash, uint256 nftId, uint96 amt) external {
+    function submitTermsAndBorrow(LoanTerms calldata terms, uint8 v, bytes32 r, bytes32 s, uint256 nftId, uint96 amt)
+        external
+    {
+        bytes32 termsHash = submitTerms(terms, v, r, s); // Submit the terms.
+        newBorrow(termsHash, nftId, amt); // Borrow against the terms.
+    }
+
+    function newBorrow(bytes32 termsHash, uint256 nftId, uint96 amt) public {
         // Get the terms associated with the hash.
         LoanTerms memory termsData = getLoanTerms[termsHash];
 
@@ -462,13 +509,43 @@ contract Puree {
 
     function calcInterest(uint40 lastTouchedTime, uint96 lastComputedDebt, uint32 bips)
         internal
-        view
+        pure
         returns (uint256)
     {
-        return 0; // TODO: GPT-4
+        int256 rateWad = bipsToSignedWads(bips);
+
+        // TODO: this sucks
+        int256 yearsWad = wadDiv(int256(uint256(lastTouchedTime)) * 1e18, 365 days * 1e18);
+
+        // TODO: this rly sucks
+        return uint256(wadMul(int256(uint256(lastComputedDebt)), wadExp(wadMul(yearsWad, int256(rateWad)))));
     }
 
     function calcAuctionRate(uint40 time, uint32 durBlocks) internal view returns (uint256) {
         return 0; // TODO: Dan?
+    }
+
+    function bipsToSignedWads(uint256 bips) internal pure returns (int256) {
+        return int256((bips * 1e18) / 10000);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                              EIP-712 LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    function DOMAIN_SEPARATOR() internal view virtual returns (bytes32) {
+        return block.chainid == INITIAL_CHAIN_ID ? INITIAL_DOMAIN_SEPARATOR : computeDomainSeparator();
+    }
+
+    function computeDomainSeparator() internal view virtual returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256("Puree"),
+                keccak256("1"),
+                block.chainid,
+                address(this)
+            )
+        );
     }
 }
