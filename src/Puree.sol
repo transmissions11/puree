@@ -156,34 +156,37 @@ contract Puree {
     //////////////////////////////////////////////////////////////*/
 
     function submitTerms(LoanTerms calldata terms, uint8 v, bytes32 r, bytes32 s) external {
-        bytes32 termsHash = hashLoanTerms(terms);
+        bytes32 termsHash = hashLoanTerms(terms); // Compute what the terms' hash is going to be.
 
-        // verify signature
+        // Check the lender listed in the terms has signed the hash.
         require(ecrecover(termsHash, v, r, s) == terms.lender, "INVALID_SIGNATURE");
 
+        // Check the terms are not already submitted.
         require(getLoanTerms[termsHash].deadline == 0, "TERMS_ALREADY_EXISTS");
-        require(terms.deadline > block.timestamp, "TERMS_EXPIRED");
-        require(terms.nonce >= getNonce[terms.lender], "INVALID_NONCE");
 
-        getLoanTerms[termsHash] = terms;
+        // Check the terms are not expired.
+        require(checkTermsNotExpired(terms), "TERMS_EXPIRED");
+
+        getLoanTerms[termsHash] = terms; // Store the terms.
     }
 
     /*//////////////////////////////////////////////////////////////
                                LOAN LOGIC
     //////////////////////////////////////////////////////////////*/
 
+    // TODO: Does not allow adding to an adding borrow!
     function borrow(bytes32 termsHash, uint256 nftId, uint96 amt) external {
+        // Get the terms associated with the hash.
         LoanTerms memory termsData = getLoanTerms[termsHash];
 
-        //////////////////////////////////////////////////////
+        // Check the terms exist and are not expired
+        require(checkTermsNotExpired(termsData), "TERMS_EXPIRED_OR_DO_NOT_EXIST");
 
-        require(termsData.deadline != 0, "TERMS_NOT_FOUND");
-
+        // Ensure the amount being borrowed is within the min and max set in the terms.
         require(amt <= termsData.maxAmount && amt >= termsData.minAmount, "INVALID_AMOUNT");
 
+        // Ensure the offer terms still have dry powder associated with them.
         require(termsData.totalAmount >= (getTotalAmountConsumed[termsHash] += amt), "AT_CAPACITY");
-
-        require(checkTermsNotExpired(termsData), "TERMS_EXPIRED");
 
         ///////////////////////////////////////////////////////////////////
 
@@ -193,170 +196,208 @@ contract Puree {
         // Give the borrower the amount of collateral they've requested.
         weth.safeTransferFrom(termsData.lender, msg.sender, amt);
 
-        //////////////////////////////////////////////////
+        ///////////////////////////////////////////////////////////////////
 
+        // Create a new borrow data struct with a reference to the terms, the borrower, the nft, the amount, and the time.
         BorrowData memory data = BorrowData(termsHash, msg.sender, nftId, amt, uint40(block.timestamp));
 
-        // Store the loan data.
-        getBorrowData[hashBorrowData(data)] = data;
+        getBorrowData[hashBorrowData(data)] = data; // Store the borrow data.
     }
 
     function repay(bytes32 borrowHash, uint96 amt) public {
+        // Get the borrow data associated with the hash.
         BorrowData storage borrowData = getBorrowData[borrowHash];
 
-        LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
-
+        // Cache the terms hash associated with the borrow data.
         bytes32 termsHash = borrowData.termsHash;
 
+        // Get the terms associated with the borrow.
+        LoanTerms memory termsData = getLoanTerms[termsHash];
+
+        // Get the total amount of the offer terms consumed.
         uint256 consumed = getTotalAmountConsumed[termsHash];
 
-        /////////////////////////////////////////////////
-
-        getTotalAmountConsumed[termsHash] = consumed > amt ? consumed - amt : 0;
-
+        // Calculate the amount of debt associated with the borrow.
         uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
 
+        // If the user has specified a max amount, they want to repay in full.
+        if (amt == type(uint96).max) amt = uint96(debt);
+
+        // Calculate the amount of debt associated with the borrow after repayment.
         uint256 newDebt = debt -= amt;
 
+        /////////////////////////////////////////////////////////
+
+        // Lower the amount consumed by the amount being repaid,
+        // ensuring not to underflow if consumption would be lowered below 0.
+        getTotalAmountConsumed[termsHash] = consumed > amt ? consumed - amt : 0;
+
+        // Update the debt calculation variables to account for the repayment.
+        borrowData.lastComputedDebt = uint96(newDebt);
         borrowData.lastTouchedTime = uint40(block.timestamp);
 
-        borrowData.lastComputedDebt = uint96(newDebt);
+        //////////////////////////////////////////////////////
 
-        //////////////////////////////////////////////////
-
+        // Send the lender the repayment.
         weth.safeTransferFrom(msg.sender, termsData.lender, amt);
 
+        // If the user now has no remaining debt:
         if (newDebt == 0) {
+            // Give them their NFT back.
             termsData.nft.safeTransferFrom(address(this), borrowData.borrower, borrowData.nftId);
 
-            delete getBorrowData[borrowHash]; // TODO: should we be deleting?
+            // TODO: Do we need to delete the borrow data or anything?
         }
-    }
-
-    function repayFull(bytes32 borrowHash) external {
-        BorrowData storage borrowData = getBorrowData[borrowHash];
-
-        LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
-
-        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
-
-        repay(borrowHash, uint96(debt));
     }
 
     /*//////////////////////////////////////////////////////////////
                             REFINANCING LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    function instantRefinance(bytes32 id, bytes32 newTermsHash) external {
-        BorrowData storage borrowData = getBorrowData[id];
+    // TODO: Are we sure this is safe for the lender to kickoff without the new terms guy agreeing?
+    function instantRefinance(bytes32 borrowHash, bytes32 newTermsHash) external {
+        // Get the borrow data associated with the hash.
+        BorrowData storage borrowData = getBorrowData[borrowHash];
 
+        // Cache the terms hash associated with the borrow data.
         bytes32 termsHash = borrowData.termsHash;
 
+        // Get the terms associated with the borrow.
         LoanTerms memory termsData = getLoanTerms[termsHash];
 
-        LoanTerms memory newTermsData = getLoanTerms[newTermsHash];
-
-        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
-
-        ////////////////////////////////////////////////////////////////
-
-        // lower the consumed amount of the original loan and increase consumed amount of the new terms
-        // ensure that the new terms are not at capacity
-
-        getTotalAmountConsumed[termsHash] -= debt;
-
-        require(newTermsData.totalAmount >= (getTotalAmountConsumed[newTermsHash] += debt), "NEW_TERMS_AT_CAPACITY");
-
-        //////////////////////////////////////////
-
-        // only lender
+        // Ensure the caller is the lender.
         require(msg.sender == termsData.lender, "NOT_LENDER");
 
-        require(checkTermsNotExpired(termsData), "TERMS_EXPIRED");
+        // Get the new terms that will be used for refinancing.
+        LoanTerms memory newTermsData = getLoanTerms[newTermsHash];
 
-        // favorable
+        // Ensure the new terms exist and are not expired.
+        require(checkTermsNotExpired(newTermsData), "TERMS_EXPIRED_OR_DO_NOT_EXIST");
+
+        // Ensure the new terms are favorable to the borrower.
         require(checkTermsFavorable(termsData, newTermsData), "TERMS_NOT_FAVORABLE");
 
-        ////////////////////////////////////////
+        // Calculate the amount of debt associated with the borrow.
+        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
 
-        // TODO: is it safe to pay them pay arbitrary debt
+        // Ensure the amount being borrowed is within the min and max set in the terms.
+        require(debt >= newTermsData.minAmount && debt <= newTermsData.maxAmount, "INVALID_AMOUNT");
 
-        weth.safeTransferFrom(msg.sender, termsData.lender, debt);
+        ///////////////////////////////////////////////////////////////
 
-        borrowData.termsHash = newTermsHash;
+        // Lower the consumption amount of the original terms by the debt.
+        getTotalAmountConsumed[termsHash] -= debt;
+
+        // Increase the consumed amount of the new terms by the debt, or revert if exceeds the capacity.
+        require(newTermsData.totalAmount >= (getTotalAmountConsumed[newTermsHash] += debt), "NEW_TERMS_AT_CAPACITY");
+
+        ///////////////////////////////////////////////////////////////
+
+        // Require the new lender to buy the old lender out.
+        weth.safeTransferFrom(newTermsData.lender, msg.sender, debt);
+
+        borrowData.termsHash = newTermsHash; // Update the terms hash.
     }
 
     function kickoffRefinancingAuction(bytes32 borrowHash) external {
-        // only lender
+        // Ensure the caller is the lender.
         require(msg.sender == getLoanTerms[getBorrowData[borrowHash].termsHash].lender, "NOT_LENDER");
 
+        // Ensure a refinancing auction is not already active.
         require(getAuctionStartTime[borrowHash] == 0, "AUCTION_ALREADY_STARTED");
 
-        getAuctionStartTime[borrowHash] = block.timestamp;
+        getAuctionStartTime[borrowHash] = block.timestamp; // Set the auction start time.
     }
 
     function auctionRefinance(bytes32 borrowHash, bytes32 newTermsHash) external {
-        BorrowData storage borrowData = getBorrowData[borrowHash];
-
-        LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
-
-        LoanTerms memory newTermsData = getLoanTerms[newTermsHash];
-
+        // Cache the start time of the refinancing auction.
         uint256 start = getAuctionStartTime[borrowHash];
 
-        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
-
-        uint256 r = calcAuctionRate(uint40(start), termsData.liquidationDurationBlocks);
-
-        /////////////////////////////////////////////
-
+        // Ensure an auction is actually active.
         require(start > 0, "NO_ACTIVE_AUCTION");
 
+        // Get the borrow data associated with the hash.
+        BorrowData storage borrowData = getBorrowData[borrowHash];
+
+        // Cache the terms hash associated with the borrow data.
+        bytes32 termsHash = borrowData.termsHash;
+
+        // Get the terms associated with the borrow.
+        LoanTerms memory termsData = getLoanTerms[termsHash];
+
+        // Get the new terms that will be used for refinancing.
+        LoanTerms memory newTermsData = getLoanTerms[newTermsHash];
+
+        // Ensure the new terms exist and are not expired.
+        require(checkTermsNotExpired(newTermsData), "TERMS_EXPIRED_OR_DO_NOT_EXIST");
+
+        // Calculate the amount of debt associated with the borrow.
+        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
+
+        // Ensure the amount being borrowed is within the min and max set in the terms.
+        require(debt >= newTermsData.minAmount && debt <= newTermsData.maxAmount, "INVALID_AMOUNT");
+
+        // Calculate the current rate at which the dutch auction would close at.
+        uint256 r = calcAuctionRate(uint40(start), termsData.liquidationDurationBlocks);
+
+        // Ensure the rate is below the liquidation threshold.
         require(r < LIQ_THRESHOLD, "INSOLVENT");
 
-        require(checkTermsNotExpired(termsData), "TERMS_EXPIRED");
+        ///////////////////////////////////////////////////////////
 
-        ///////////////////////////////////////////
+        // Overwrite the old terms's interest rate for use in the checkTermsFavorable
+        // computation. That way checkTermsFavorable will enforce that the rate is no
+        // worse than the current dutch auction rate.
+        termsData.interestRateBips = uint32(r);
 
-        termsData.interestRateBips = uint32(r); // TODO: is this rights
-
-        // favorable
+        // Ensure the terms are favorable.
         require(checkTermsFavorable(termsData, newTermsData), "TERMS_NOT_FAVORABLE");
 
-        ///////////////////////////
+        // Lower the consumption amount of the original terms by the debt.
+        getTotalAmountConsumed[termsHash] -= debt;
 
-        // buy out the prev lender
+        // Increase the consumed amount of the new terms by the debt, or revert if exceeds the capacity.
+        require(newTermsData.totalAmount >= (getTotalAmountConsumed[newTermsHash] += debt), "NEW_TERMS_AT_CAPACITY");
+
+        ///////////////////////////////////////////////////////////
+
+        // Require the new lender to buy the old lender out.
         weth.safeTransferFrom(msg.sender, termsData.lender, debt);
 
-        borrowData.termsHash = newTermsHash;
+        // Update the debt calculation variables to account for the new rate.
+        borrowData.lastComputedDebt = uint96(debt);
+        borrowData.lastTouchedTime = uint40(block.timestamp);
 
-        delete getAuctionStartTime[borrowHash]; // TODO: is this right
+        delete getAuctionStartTime[borrowHash]; // Mark the auction as completed.
     }
 
     function liquidate(bytes32 borrowHash) external {
-        BorrowData storage borrowData = getBorrowData[borrowHash];
-
-        LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
-
+        // Cache the start time of the refinancing auction.
         uint256 start = getAuctionStartTime[borrowHash];
 
-        uint256 r = calcAuctionRate(uint40(start), termsData.liquidationDurationBlocks);
-
-        //////////////////////////////////
-
+        // Ensure an auction is actually active.
         require(start > 0, "NO_ACTIVE_AUCTION");
 
-        require(r > LIQ_THRESHOLD, "NOT_INSOLVENT");
+        // Get the borrow data associated with the hash.
+        BorrowData storage borrowData = getBorrowData[borrowHash];
 
-        /////////////////////////////////////////////////
+        // Cache the terms hash associated with the borrow data.
+        LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
 
+        // Calculate the current rate at which the dutch auction would close at.
+        uint256 r = calcAuctionRate(uint40(start), termsData.liquidationDurationBlocks);
+
+        // Ensure the rate is above or equal to the liquidation threshold.
+        require(r >= LIQ_THRESHOLD, "NOT_INSOLVENT");
+
+        ///////////////////////////////////////////////////////////
+
+        // Send the NFT to the lender.
         termsData.nft.safeTransferFrom(address(this), termsData.lender, borrowData.nftId);
 
-        ///////////////////////////////////////////////////
+        delete getAuctionStartTime[borrowHash]; // Mark teh auction as completed.
 
-        delete getAuctionStartTime[borrowHash];
-
-        delete getBorrowData[borrowHash];
+        // TODO: Do we need to delete the borrow data?
     }
 
     /*//////////////////////////////////////////////////////////////
