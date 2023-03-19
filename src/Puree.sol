@@ -173,8 +173,7 @@ contract Puree {
                                LOAN LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    // TODO: Does not allow adding to an adding borrow!
-    function borrow(bytes32 termsHash, uint256 nftId, uint96 amt) external {
+    function newBorrow(bytes32 termsHash, uint256 nftId, uint96 amt) external {
         // Get the terms associated with the hash.
         LoanTerms memory termsData = getLoanTerms[termsHash];
 
@@ -192,7 +191,7 @@ contract Puree {
         // Take the borrower's collateral NFT and keep it in the Puree contract for safe keeping.
         termsData.nft.safeTransferFrom(msg.sender, address(this), nftId);
 
-        // Give the borrower the amount of collateral they've requested.
+        // Give the borrower the amount of debt they've requested.
         weth.safeTransferFrom(termsData.lender, msg.sender, amt);
 
         ///////////////////////////////////////////////////////////////////
@@ -201,6 +200,43 @@ contract Puree {
         BorrowData memory data = BorrowData(termsHash, msg.sender, nftId, amt, uint40(block.timestamp));
 
         getBorrowData[hashBorrowData(data)] = data; // Store the borrow data.
+    }
+
+    function furtherBorrow(bytes32 borrowHash, uint256 amt) public {
+        // Get the borrow data associated with the hash.
+        BorrowData storage borrowData = getBorrowData[borrowHash];
+
+        // Cache the terms hash associated with the borrow data.
+        bytes32 termsHash = borrowData.termsHash;
+
+        // Get the terms associated with the borrow.
+        LoanTerms memory termsData = getLoanTerms[termsHash];
+
+        // Check the terms exist and are not expired
+        require(checkTermsNotExpired(termsData), "TERMS_EXPIRED_OR_DO_NOT_EXIST");
+
+        // Calculate the amount of debt associated with the borrow.
+        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
+
+        // Calculate the amount of debt associated with the borrow after furthering.
+        uint256 newDebt = debt + amt;
+
+        ///////////////////////////////////////////////////////////////////
+
+        // Ensure the new debt is within the max set in the terms.
+        require(newDebt <= termsData.maxAmount, "INVALID_AMOUNT");
+
+        // Ensure the offer terms still have dry powder associated with them.
+        require(termsData.totalAmount >= (getTotalAmountConsumed[termsHash] += amt), "AT_CAPACITY");
+
+        // Update the debt calculation variables to account for the furtherance.
+        borrowData.lastComputedDebt = uint96(newDebt);
+        borrowData.lastTouchedTime = uint40(block.timestamp);
+
+        ///////////////////////////////////////////////////////////////////
+
+        // Give the borrower the amount of collateral they've requested.
+        weth.safeTransferFrom(termsData.lender, msg.sender, amt);
     }
 
     function repay(bytes32 borrowHash, uint96 amt) public {
@@ -223,7 +259,7 @@ contract Puree {
         if (amt == type(uint96).max) amt = uint96(debt);
 
         // Calculate the amount of debt associated with the borrow after repayment.
-        uint256 newDebt = debt -= amt;
+        uint256 newDebt = debt - amt;
 
         /////////////////////////////////////////////////////////
 
@@ -244,8 +280,6 @@ contract Puree {
         if (newDebt == 0) {
             // Give them their NFT back.
             termsData.nft.safeTransferFrom(address(this), borrowData.borrower, borrowData.nftId);
-
-            // TODO: Do we need to delete the borrow data or anything?
         }
     }
 
@@ -394,8 +428,6 @@ contract Puree {
         termsData.nft.safeTransferFrom(address(this), termsData.lender, borrowData.nftId);
 
         delete getAuctionStartTime[borrowHash]; // Mark teh auction as completed.
-
-        // TODO: Do we need to delete the borrow data?
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -433,10 +465,10 @@ contract Puree {
         view
         returns (uint256)
     {
-        return 0;
+        return 0; // TODO: GPT-4
     }
 
     function calcAuctionRate(uint40 time, uint32 durBlocks) internal view returns (uint256) {
-        return 0; // TODO
+        return 0; // TODO: Dan?
     }
 }
