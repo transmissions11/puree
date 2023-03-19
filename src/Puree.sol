@@ -6,6 +6,8 @@ import "solmate/tokens/ERC20.sol";
 import "solmate/utils/SafeTransferLib.sol";
 import "solmate/utils/SignedWadMath.sol";
 
+import "forge-std/console2.sol";
+
 // Blend: Peer-to-Peer Perpetual Lending With Arbitrary Collateral
 // Galaga, Pacman, Dan Robinson
 
@@ -230,7 +232,7 @@ contract Puree {
         newBorrow(termsHash, nftId, amt); // Borrow against the terms.
     }
 
-    function newBorrow(bytes32 termsHash, uint256 nftId, uint96 amt) public {
+    function newBorrow(bytes32 termsHash, uint256 nftId, uint96 amt) public returns (bytes32 borrowHash) {
         // Get the terms associated with the hash.
         LoanTerms memory termsData = getLoanTerms[termsHash];
 
@@ -246,7 +248,7 @@ contract Puree {
         ///////////////////////////////////////////////////////////////////
 
         // Take the borrower's collateral NFT and keep it in the Puree contract for safe keeping.
-        termsData.nft.safeTransferFrom(msg.sender, address(this), nftId);
+        termsData.nft.transferFrom(msg.sender, address(this), nftId);
 
         // Give the borrower the amount of debt they've requested.
         weth.safeTransferFrom(termsData.lender, msg.sender, amt);
@@ -256,7 +258,7 @@ contract Puree {
         // Create a new borrow data struct with a reference to the terms, the borrower, the nft, the amount, and the time.
         BorrowData memory data = BorrowData(termsHash, msg.sender, nftId, amt, uint40(block.timestamp));
 
-        getBorrowData[hashBorrowData(data)] = data; // Store the borrow data.
+        getBorrowData[borrowHash = hashBorrowData(data)] = data; // Store the borrow data.
     }
 
     function furtherBorrow(bytes32 borrowHash, uint256 amt) external {
@@ -276,7 +278,8 @@ contract Puree {
         require(checkTermsNotExpired(termsData), "TERMS_EXPIRED_OR_DO_NOT_EXIST");
 
         // Calculate the amount of debt associated with the borrow.
-        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
+        uint256 debt =
+            computeCurrentDebt(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
 
         // Calculate the amount of debt associated with the borrow after furthering.
         uint256 newDebt = debt + amt;
@@ -306,6 +309,9 @@ contract Puree {
         // Cache the terms hash associated with the borrow data.
         bytes32 termsHash = borrowData.termsHash;
 
+        // Ensure the borrow exists.
+        require(termsHash != bytes32(0), "BORROW_DOES_NOT_EXIST");
+
         // Get the terms associated with the borrow.
         LoanTerms memory termsData = getLoanTerms[termsHash];
 
@@ -313,7 +319,8 @@ contract Puree {
         uint256 consumed = getTotalAmountConsumed[termsHash];
 
         // Calculate the amount of debt associated with the borrow.
-        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
+        uint256 debt =
+            computeCurrentDebt(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
 
         // If the user has specified a max amount, they want to repay in full.
         if (amt == type(uint96).max) amt = uint96(debt);
@@ -339,7 +346,7 @@ contract Puree {
         // If the user now has no remaining debt:
         if (newDebt == 0) {
             // Give them their NFT back.
-            termsData.nft.safeTransferFrom(address(this), borrowData.borrower, borrowData.nftId);
+            termsData.nft.transferFrom(address(this), borrowData.borrower, borrowData.nftId);
         }
     }
 
@@ -370,7 +377,8 @@ contract Puree {
         require(checkTermsFavorable(termsData, newTermsData), "TERMS_NOT_FAVORABLE");
 
         // Calculate the amount of debt associated with the borrow.
-        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
+        uint256 debt =
+            computeCurrentDebt(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
 
         // Ensure the amount being borrowed is within the min and max set in the terms.
         require(debt >= newTermsData.minAmount && debt <= newTermsData.maxAmount, "INVALID_AMOUNT");
@@ -424,7 +432,8 @@ contract Puree {
         require(checkTermsNotExpired(newTermsData), "TERMS_EXPIRED_OR_DO_NOT_EXIST");
 
         // Calculate the amount of debt associated with the borrow.
-        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
+        uint256 debt =
+            computeCurrentDebt(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
 
         // Ensure the amount being borrowed is within the min and max set in the terms.
         require(debt >= newTermsData.minAmount && debt <= newTermsData.maxAmount, "INVALID_AMOUNT");
@@ -520,8 +529,8 @@ contract Puree {
                            CALCULATION HELPERS
     //////////////////////////////////////////////////////////////*/
 
-    function calcInterest(uint40 lastTouchedTime, uint96 lastComputedDebt, uint32 bips)
-        internal
+    function computeCurrentDebt(uint40 lastTouchedTime, uint96 lastComputedDebt, uint32 bips)
+        public
         view
         returns (uint256)
     {
