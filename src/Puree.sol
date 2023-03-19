@@ -94,7 +94,6 @@ struct LoanTerms {
     uint96 maxAmount;
     uint96 minAmount;
     uint96 totalAmount;
-    // TODO: What is totalAmount for?
     ///////////////////////
     uint16 liquidationDurationBlocks;
     uint32 interestRateBips;
@@ -107,8 +106,8 @@ struct BorrowData {
     bytes32 termsHash;
     address borrower;
     uint256 nftId;
-    uint96 debt;
-    uint40 time; // first borrow time
+    uint96 lastComputedDebt;
+    uint40 lastTouchedTime;
 }
 
 // todo: replay and what to do with closed loans
@@ -213,9 +212,15 @@ contract Puree {
 
         /////////////////////////////////////////////////
 
-        uint256 newDebt = borrowData.debt -= amt;
-
         getTotalAmountConsumed[termsHash] = consumed > amt ? consumed - amt : 0;
+
+        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
+
+        uint256 newDebt = debt -= amt;
+
+        borrowData.lastTouchedTime = uint40(block.timestamp);
+
+        borrowData.lastComputedDebt = uint96(newDebt);
 
         //////////////////////////////////////////////////
 
@@ -228,9 +233,19 @@ contract Puree {
         }
     }
 
-    function repayFull(bytes32 id) external {
-        repay(id, getBorrowData[id].debt);
+    function repayFull(bytes32 borrowHash) external {
+        BorrowData storage borrowData = getBorrowData[borrowHash];
+
+        LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
+
+        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
+
+        repay(borrowHash, uint96(debt));
     }
+
+    /*//////////////////////////////////////////////////////////////
+                            REFINANCING LOGIC
+    //////////////////////////////////////////////////////////////*/
 
     function instantRefinance(bytes32 id, bytes32 newTermsHash) external {
         BorrowData storage borrowData = getBorrowData[id];
@@ -241,7 +256,7 @@ contract Puree {
 
         LoanTerms memory newTermsData = getLoanTerms[newTermsHash];
 
-        uint256 debt = calcInterest(borrowData.time, borrowData.debt, termsData.interestRateBips);
+        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
 
         ////////////////////////////////////////////////////////////////
 
@@ -289,7 +304,7 @@ contract Puree {
 
         uint256 start = getAuctionStartTime[borrowHash];
 
-        uint256 debt = calcInterest(borrowData.time, borrowData.debt, termsData.interestRateBips);
+        uint256 debt = calcInterest(borrowData.lastTouchedTime, borrowData.lastComputedDebt, termsData.interestRateBips);
 
         uint256 r = calcAuctionRate(uint40(start), termsData.liquidationDurationBlocks);
 
@@ -352,7 +367,7 @@ contract Puree {
         return terms.deadline >= block.timestamp && terms.nonce >= getNonce[terms.lender];
     }
 
-    function checkTermsFavorable(LoanTerms memory terms1, LoanTerms memory terms2) internal view returns (bool) {
+    function checkTermsFavorable(LoanTerms memory terms1, LoanTerms memory terms2) internal pure returns (bool) {
         return terms2.nft == terms1.nft && terms2.minAmount >= terms1.minAmount
             && terms2.liquidationDurationBlocks >= terms1.liquidationDurationBlocks
             && terms2.interestRateBips <= terms1.interestRateBips;
@@ -374,7 +389,11 @@ contract Puree {
                            CALCULATION HELPERS
     //////////////////////////////////////////////////////////////*/
 
-    function calcInterest(uint40 time, uint96 debt, uint32 bips) internal view returns (uint256) {
+    function calcInterest(uint40 lastTouchedTime, uint96 lastComputedDebt, uint32 bips)
+        internal
+        view
+        returns (uint256)
+    {
         return 0; // TODO
     }
 
