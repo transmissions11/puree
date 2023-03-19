@@ -118,6 +118,10 @@ contract Puree {
                                 CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
+    bytes32 public constant TERMS_TYPEHASH = keccak256(
+        "TermsOffer(address lender,address nft,uint96 maxAmount,uint96 minAmount,uint96 totalAmount,uint16 liquidationDurationBlocks,uint32 interestRateBips,uint40 deadline,uint32 nonce)"
+    );
+
     uint256 internal constant LIQ_THRESHOLD = 100_000; // TODO
 
     int256 internal constant YEAR_WAD = 365 days * 1e18;
@@ -127,7 +131,7 @@ contract Puree {
     ERC20 internal immutable weth;
 
     /*//////////////////////////////////////////////////////////////
-                            EIP-2612 STORAGE
+                             EIP-712 STORAGE
     //////////////////////////////////////////////////////////////*/
 
     uint256 internal immutable INITIAL_CHAIN_ID;
@@ -145,21 +149,29 @@ contract Puree {
                                 LOAN DATA
     //////////////////////////////////////////////////////////////*/
 
-    mapping(bytes32 => LoanTerms) getLoanTerms;
+    mapping(bytes32 => LoanTerms) internal getLoanTerms;
 
-    mapping(bytes32 => BorrowData) getBorrowData;
+    function getTerms(bytes32 termsHash) external view returns (LoanTerms memory) {
+        return getLoanTerms[termsHash];
+    }
+
+    mapping(bytes32 => BorrowData) internal getBorrowData;
+
+    function getBorrow(bytes32 termsHash) external view returns (BorrowData memory) {
+        return getBorrowData[termsHash];
+    }
 
     // TODO: This could be rolled into terms, but
     // should just be a hash or whatever long term
-    mapping(bytes32 => uint256) getTotalAmountConsumed;
+    mapping(bytes32 => uint256) public getTotalAmountConsumed;
 
-    mapping(bytes32 => uint256) getAuctionStartBlock;
+    mapping(bytes32 => uint256) public getAuctionStartBlock;
 
     /*//////////////////////////////////////////////////////////////
                                 USER DATA
     //////////////////////////////////////////////////////////////*/
 
-    mapping(address => uint256) getNonce;
+    mapping(address => uint256) public getNonce;
 
     function bumpNonce(uint256 n) external {
         getNonce[msg.sender] += n;
@@ -173,36 +185,7 @@ contract Puree {
         termsHash = hashLoanTerms(terms); // Compute what the terms' hash is going to be.
 
         // Check the lender listed in the terms has signed the hash.
-        require(
-            ecrecover(
-                keccak256(
-                    abi.encodePacked(
-                        "\x19\x01",
-                        DOMAIN_SEPARATOR(),
-                        keccak256(
-                            abi.encode(
-                                keccak256(
-                                    "TermsOffer(address lender,address nft,uint96 maxAmount,uint96 minAmount,uint96 totalAmount,uint16 liquidationDurationBlocks,uint32 interestRateBips,uint40 deadline,uint32 nonce)"
-                                ),
-                                terms.lender,
-                                terms.nft,
-                                terms.maxAmount,
-                                terms.minAmount,
-                                terms.totalAmount,
-                                terms.liquidationDurationBlocks,
-                                terms.interestRateBips,
-                                terms.deadline,
-                                terms.nonce
-                            )
-                        )
-                    )
-                ),
-                v,
-                r,
-                s
-            ) == terms.lender,
-            "INVALID_SIGNATURE"
-        );
+        require(ecrecover(getTermsDigest(terms), v, r, s) == terms.lender, "INVALID_SIGNATURE");
 
         // Check the terms are not already submitted.
         require(getLoanTerms[termsHash].deadline == 0, "TERMS_ALREADY_EXISTS");
@@ -211,6 +194,29 @@ contract Puree {
         require(checkTermsNotExpired(terms), "TERMS_EXPIRED");
 
         getLoanTerms[termsHash] = terms; // Store the terms.
+    }
+
+    function getTermsDigest(LoanTerms calldata terms) public view returns (bytes32) {
+        return keccak256(
+            abi.encodePacked(
+                "\x19\x01",
+                getDomainSeparator(),
+                keccak256(
+                    abi.encode(
+                        TERMS_TYPEHASH,
+                        terms.lender,
+                        terms.nft,
+                        terms.maxAmount,
+                        terms.minAmount,
+                        terms.totalAmount,
+                        terms.liquidationDurationBlocks,
+                        terms.interestRateBips,
+                        terms.deadline,
+                        terms.nonce
+                    )
+                )
+            )
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -502,11 +508,11 @@ contract Puree {
                               HASH HELPERS
     //////////////////////////////////////////////////////////////*/
 
-    function hashLoanTerms(LoanTerms memory l) internal view returns (bytes32) {
+    function hashLoanTerms(LoanTerms memory l) public view returns (bytes32) {
         return keccak256(abi.encode(l));
     }
 
-    function hashBorrowData(BorrowData memory b) internal view returns (bytes32) {
+    function hashBorrowData(BorrowData memory b) public view returns (bytes32) {
         return keccak256(abi.encode(b));
     }
 
@@ -547,7 +553,7 @@ contract Puree {
                               EIP-712 LOGIC
     //////////////////////////////////////////////////////////////*/
 
-    function DOMAIN_SEPARATOR() internal view virtual returns (bytes32) {
+    function getDomainSeparator() public view virtual returns (bytes32) {
         return block.chainid == INITIAL_CHAIN_ID ? INITIAL_DOMAIN_SEPARATOR : computeDomainSeparator();
     }
 
