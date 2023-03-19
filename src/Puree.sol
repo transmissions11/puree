@@ -149,7 +149,7 @@ contract Puree {
     // should just be a hash or whatever long term
     mapping(bytes32 => uint256) getTotalAmountConsumed;
 
-    mapping(bytes32 => uint256) getAuctionStartTime;
+    mapping(bytes32 => uint256) getAuctionStartBlock;
 
     /*//////////////////////////////////////////////////////////////
                                 USER DATA
@@ -383,14 +383,14 @@ contract Puree {
         require(msg.sender == getLoanTerms[getBorrowData[borrowHash].termsHash].lender, "NOT_LENDER");
 
         // Ensure a refinancing auction is not already active.
-        require(getAuctionStartTime[borrowHash] == 0, "AUCTION_ALREADY_STARTED");
+        require(getAuctionStartBlock[borrowHash] == 0, "AUCTION_ALREADY_STARTED");
 
-        getAuctionStartTime[borrowHash] = block.timestamp; // Set the auction start time.
+        getAuctionStartBlock[borrowHash] = block.number; // Set the auction start.
     }
 
     function auctionRefinance(bytes32 borrowHash, bytes32 newTermsHash) external {
-        // Cache the start time of the refinancing auction.
-        uint256 start = getAuctionStartTime[borrowHash];
+        // Cache the start block of the refinancing auction.
+        uint256 start = getAuctionStartBlock[borrowHash];
 
         // Ensure an auction is actually active.
         require(start > 0, "NO_ACTIVE_AUCTION");
@@ -417,7 +417,7 @@ contract Puree {
         require(debt >= newTermsData.minAmount && debt <= newTermsData.maxAmount, "INVALID_AMOUNT");
 
         // Calculate the current rate at which the dutch auction would close at.
-        uint256 r = calcAuctionRate(uint40(start), termsData.liquidationDurationBlocks);
+        uint256 r = calcAuctionRate(start, termsData.liquidationDurationBlocks);
 
         // Ensure the rate is below the liquidation threshold.
         require(r < LIQ_THRESHOLD, "INSOLVENT");
@@ -447,12 +447,12 @@ contract Puree {
         borrowData.lastComputedDebt = uint96(debt);
         borrowData.lastTouchedTime = uint40(block.timestamp);
 
-        delete getAuctionStartTime[borrowHash]; // Mark the auction as completed.
+        delete getAuctionStartBlock[borrowHash]; // Mark the auction as completed.
     }
 
     function liquidate(bytes32 borrowHash) external {
-        // Cache the start time of the refinancing auction.
-        uint256 start = getAuctionStartTime[borrowHash];
+        // Cache the start block of the refinancing auction.
+        uint256 start = getAuctionStartBlock[borrowHash];
 
         // Ensure an auction is actually active.
         require(start > 0, "NO_ACTIVE_AUCTION");
@@ -464,7 +464,7 @@ contract Puree {
         LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
 
         // Calculate the current rate at which the dutch auction would close at.
-        uint256 r = calcAuctionRate(uint40(start), termsData.liquidationDurationBlocks);
+        uint256 r = calcAuctionRate(start, termsData.liquidationDurationBlocks);
 
         // Ensure the rate is above or equal to the liquidation threshold.
         require(r >= LIQ_THRESHOLD, "NOT_INSOLVENT");
@@ -474,7 +474,7 @@ contract Puree {
         // Send the NFT to the lender.
         termsData.nft.safeTransferFrom(address(this), termsData.lender, borrowData.nftId);
 
-        delete getAuctionStartTime[borrowHash]; // Mark teh auction as completed.
+        delete getAuctionStartBlock[borrowHash]; // Mark the auction as completed.
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -509,20 +509,18 @@ contract Puree {
 
     function calcInterest(uint40 lastTouchedTime, uint96 lastComputedDebt, uint32 bips)
         internal
-        pure
+        view
         returns (uint256)
     {
-        int256 rateWad = bipsToSignedWads(bips);
+        int256 yearWad = 365 days * 1e18;
 
-        // TODO: this sucks
-        int256 yearsWad = wadDiv(int256(uint256(lastTouchedTime)) * 1e18, 365 days * 1e18);
+        int256 yearsWad = wadDiv(int256(block.timestamp - uint256(lastTouchedTime)) * 1e18, yearWad);
 
-        // TODO: this rly sucks
-        return uint256(wadMul(int256(uint256(lastComputedDebt)), wadExp(wadMul(yearsWad, int256(rateWad)))));
+        return uint256(wadMul(int256(uint256(lastComputedDebt)), wadExp(wadMul(yearsWad, bipsToSignedWads(bips)))));
     }
 
-    function calcAuctionRate(uint40 time, uint32 durBlocks) internal view returns (uint256) {
-        return 0; // TODO: Dan?
+    function calcAuctionRate(uint256 startBlock, uint32 durBlocks) internal view returns (uint256) {
+        return 0; // TODO:
     }
 
     function bipsToSignedWads(uint256 bips) internal pure returns (int256) {
