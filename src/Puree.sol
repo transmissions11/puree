@@ -93,17 +93,18 @@ struct LoanTerms {
     ERC721 nft;
     uint96 maxAmount;
     uint96 minAmount;
+    uint96 totalAmount;
     // TODO: What is totalAmount for?
     ///////////////////////
     uint16 liquidationDurationBlocks;
     uint32 interestRateBips;
     ///////////////////////
     uint40 deadline;
-    uint32 nonce;
+    uint32 getNonce;
 }
 
-struct LoanData {
-    LoanTerms terms;
+struct BorrowData {
+    bytes32 termsHash;
     address borrower;
     uint256 nftId;
     uint96 debt;
@@ -115,166 +116,248 @@ struct LoanData {
 contract Puree {
     using SafeTransferLib for ERC20;
 
+    /*//////////////////////////////////////////////////////////////
+                                CONSTANTS
+    //////////////////////////////////////////////////////////////*/
+
     uint256 LIQ_THRESHOLD = 1000000; // todo
 
-    ERC20 internal weth;
+    ERC20 internal immutable weth;
 
     constructor(ERC20 _weth) {
         weth = _weth;
     }
 
-    mapping(uint256 => LoanData) loanData;
+    /*//////////////////////////////////////////////////////////////
+                                LOAN DATA
+    //////////////////////////////////////////////////////////////*/
 
-    mapping(uint256 => uint256) auctionStartTime;
+    mapping(bytes32 => LoanTerms) getLoanTerms;
 
-    mapping(address => uint256) nonce;
+    mapping(bytes32 => BorrowData) getBorrowData;
 
-    uint256 loanId;
+    // TODO: This could be rolled into terms, but
+    // should just be a hash or whatever long term
+    mapping(bytes32 => uint256) getTotalAmountConsumed;
+
+    mapping(bytes32 => uint256) getAuctionStartTime;
+
+    /*//////////////////////////////////////////////////////////////
+                                USER DATA
+    //////////////////////////////////////////////////////////////*/
+
+    mapping(address => uint256) getNonce;
 
     function bumpNonce(uint256 n) external {
-        nonce[msg.sender] += n;
+        getNonce[msg.sender] += n;
     }
 
-    function borrow(LoanTerms calldata terms, uint256 nftId, uint96 amt) external {
+    /*//////////////////////////////////////////////////////////////
+                               LOAN LOGIC
+    //////////////////////////////////////////////////////////////*/
+
+    function borrow(bytes32 termsHash, uint256 nftId, uint96 amt) external {
         // TODO: validate signature
 
+        LoanTerms memory termsData = getLoanTerms[termsHash];
+
+        //////////////////////////////////////////////////////
+
+        require(termsData.deadline != 0, "TERMS_NOT_FOUND");
+
+        require(amt <= termsData.maxAmount && amt >= termsData.minAmount, "INVALID_AMOUNT");
+
+        require(termsData.totalAmount >= (getTotalAmountConsumed[termsHash] += amt), "AT_CAPACITY");
+
+        require(checkTermsNotExpired(termsData), "TERMS_EXPIRED");
+
+        ///////////////////////////////////////////////////////////////////
+
         // Take the borrower's collateral NFT and keep it in the Puree contract for safe keeping.
-        terms.nft.safeTransferFrom(msg.sender, address(this), nftId);
-
-        // Ensure the amount fits within the lender's terms.
-        require(amt <= terms.maxAmount && amt >= terms.minAmount, "INVALID_AMOUNT");
-
-        require(checkTermsNotExpired(terms), "TERMS_EXPIRED");
+        termsData.nft.safeTransferFrom(msg.sender, address(this), nftId);
 
         // Give the borrower the amount of collateral they've requested.
-        weth.safeTransferFrom(terms.lender, msg.sender, amt);
+        weth.safeTransferFrom(termsData.lender, msg.sender, amt);
+
+        //////////////////////////////////////////////////
+
+        BorrowData memory data = BorrowData(termsHash, msg.sender, nftId, amt, uint40(block.timestamp));
 
         // Store the loan data.
-        loanData[loanId++] = LoanData(terms, msg.sender, nftId, amt, uint40(block.timestamp));
+        getBorrowData[hashBorrowData(data)] = data;
     }
 
-    function repay(uint256 id, uint96 amt) external {
-        LoanData storage loan = loanData[id];
+    function repay(bytes32 borrowHash, uint96 amt) public {
+        BorrowData storage borrowData = getBorrowData[borrowHash];
 
-        weth.safeTransferFrom(msg.sender, loan.terms.lender, amt);
+        LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
 
-        loan.debt -= amt;
+        bytes32 termsHash = borrowData.termsHash;
 
-        if (loan.debt < loan.terms.minAmount) {
-            loan.terms.nft.safeTransferFrom(address(this), loan.borrower, loan.nftId);
+        uint256 consumed = getTotalAmountConsumed[termsHash];
 
-            delete loanData[id];
+        /////////////////////////////////////////////////
+
+        uint256 newDebt = borrowData.debt -= amt;
+
+        getTotalAmountConsumed[termsHash] = consumed > amt ? consumed - amt : 0;
+
+        //////////////////////////////////////////////////
+
+        weth.safeTransferFrom(msg.sender, termsData.lender, amt);
+
+        if (newDebt == 0) {
+            termsData.nft.safeTransferFrom(address(this), borrowData.borrower, borrowData.nftId);
+
+            delete getBorrowData[borrowHash]; // TODO: should we be deleting?
         }
     }
 
-    function repayFull(uint256 id) external {
-        LoanData storage loan = loanData[id];
-
-        uint256 debt = calcInterest(loan.time, loan.debt, loan.terms.interestRateBips);
-
-        weth.safeTransferFrom(msg.sender, loan.terms.lender, debt);
-
-        loan.terms.nft.safeTransferFrom(address(this), loan.borrower, loan.nftId);
-
-        delete loanData[id];
+    function repayFull(bytes32 id) external {
+        repay(id, getBorrowData[id].debt);
     }
 
-    function instantRefinance(uint256 id, LoanTerms calldata terms2) external {
-        LoanData storage loan = loanData[id];
+    function instantRefinance(bytes32 id, bytes32 newTermsHash) external {
+        BorrowData storage borrowData = getBorrowData[id];
+
+        bytes32 termsHash = borrowData.termsHash;
+
+        LoanTerms memory termsData = getLoanTerms[termsHash];
+
+        LoanTerms memory newTermsData = getLoanTerms[newTermsHash];
+
+        uint256 debt = calcInterest(borrowData.time, borrowData.debt, termsData.interestRateBips);
+
+        ////////////////////////////////////////////////////////////////
+
+        // lower the consumed amount of the original loan and increase consumed amount of the new terms
+        // ensure that the new terms are not at capacity
+
+        getTotalAmountConsumed[termsHash] -= debt;
+
+        require(newTermsData.totalAmount >= (getTotalAmountConsumed[newTermsHash] += debt), "NEW_TERMS_AT_CAPACITY");
+
+        //////////////////////////////////////////
 
         // only lender
-        require(msg.sender == loan.terms.lender, "NOT_LENDER");
+        require(msg.sender == termsData.lender, "NOT_LENDER");
 
-        require(checkTermsNotExpired(terms2), "TERMS_EXPIRED");
-
-        // same
-        require(terms2.nft == loan.terms.nft, "DIFFERENT_NFT");
+        require(checkTermsNotExpired(termsData), "TERMS_EXPIRED");
 
         // favorable
-        require(terms2.minAmount >= loan.terms.minAmount, "MIN_AMOUNT_UNFAVORABLE");
-        require(
-            terms2.liquidationDurationBlocks >= loan.terms.liquidationDurationBlocks, "LIQUIDATION_DURATION_UNFAVORABLE"
-        );
-        require(terms2.interestRateBips <= loan.terms.interestRateBips, "INTEREST_RATE_UNFAVORABLE");
+        require(checkTermsFavorable(termsData, newTermsData), "TERMS_NOT_FAVORABLE");
+
+        ////////////////////////////////////////
 
         // TODO: is it safe to pay them pay arbitrary debt
-        uint256 debt = calcInterest(loan.time, loan.debt, loan.terms.interestRateBips);
-        weth.safeTransferFrom(terms2.lender, loan.terms.lender, debt);
 
-        loan.terms = terms2;
+        weth.safeTransferFrom(msg.sender, termsData.lender, debt);
+
+        borrowData.termsHash = newTermsHash;
     }
 
-    function kickoffRefinancingAuction(uint256 id) external {
+    function kickoffRefinancingAuction(bytes32 borrowHash) external {
         // only lender
-        require(msg.sender == loanData[id].terms.lender, "NOT_LENDER");
+        require(msg.sender == getLoanTerms[getBorrowData[borrowHash].termsHash].lender, "NOT_LENDER");
 
-        require(auctionStartTime[id] == 0, "NO_ACTIVE_AUCTION");
+        require(getAuctionStartTime[borrowHash] == 0, "AUCTION_ALREADY_STARTED");
 
-        auctionStartTime[id] = block.timestamp;
+        getAuctionStartTime[borrowHash] = block.timestamp;
     }
 
-    function auctionRefinance(uint256 id, LoanTerms calldata terms2) external {
-        uint256 start = auctionStartTime[id];
+    function auctionRefinance(bytes32 borrowHash, bytes32 newTermsHash) external {
+        BorrowData storage borrowData = getBorrowData[borrowHash];
+
+        LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
+
+        LoanTerms memory newTermsData = getLoanTerms[newTermsHash];
+
+        uint256 start = getAuctionStartTime[borrowHash];
+
+        uint256 debt = calcInterest(borrowData.time, borrowData.debt, termsData.interestRateBips);
+
+        uint256 r = calcAuctionRate(uint40(start), termsData.liquidationDurationBlocks);
+
+        /////////////////////////////////////////////
 
         require(start > 0, "NO_ACTIVE_AUCTION");
-
-        LoanData storage loan = loanData[id];
-
-        uint256 r = calcAuctionRate(uint40(start), loan.terms.liquidationDurationBlocks);
 
         require(r < LIQ_THRESHOLD, "INSOLVENT");
 
-        require(checkTermsNotExpired(terms2), "TERMS_EXPIRED");
+        require(checkTermsNotExpired(termsData), "TERMS_EXPIRED");
 
-        // same
-        require(terms2.nft == loan.terms.nft, "DIFFERENT_NFT");
+        ///////////////////////////////////////////
+
+        termsData.interestRateBips = uint32(r); // TODO: is this rights
 
         // favorable
-        require(terms2.minAmount >= loan.terms.minAmount, "MIN_AMOUNT_UNFAVORABLE");
-        require(
-            terms2.liquidationDurationBlocks >= loan.terms.liquidationDurationBlocks, "LIQUIDATION_DURATION_UNFAVORABLE"
-        );
+        require(checkTermsFavorable(termsData, newTermsData), "TERMS_NOT_FAVORABLE");
 
-        require(terms2.interestRateBips <= r, "INTEREST_RATE_UNFAVORABLE");
+        ///////////////////////////
 
         // buy out the prev lender
-        uint256 debt = calcInterest(loan.time, loan.debt, loan.terms.interestRateBips);
-        weth.safeTransferFrom(terms2.lender, loan.terms.lender, debt);
+        weth.safeTransferFrom(msg.sender, termsData.lender, debt);
 
-        loan.terms = terms2;
+        borrowData.termsHash = newTermsHash;
+
+        delete getAuctionStartTime[borrowHash]; // TODO: is this right
     }
 
-    function liquidate(uint256 id) external {
-        LoanData storage loan = loanData[id];
+    function liquidate(bytes32 borrowHash) external {
+        BorrowData storage borrowData = getBorrowData[borrowHash];
 
-        uint256 start = auctionStartTime[id];
+        LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
+
+        uint256 start = getAuctionStartTime[borrowHash];
+
+        uint256 r = calcAuctionRate(uint40(start), termsData.liquidationDurationBlocks);
+
+        //////////////////////////////////
 
         require(start > 0, "NO_ACTIVE_AUCTION");
 
-        uint256 r = calcAuctionRate(uint40(start), loan.terms.liquidationDurationBlocks);
+        require(r > LIQ_THRESHOLD, "NOT_INSOLVENT");
 
-        if (r > LIQ_THRESHOLD) {
-            delete auctionStartTime[id];
+        /////////////////////////////////////////////////
 
-            loan.terms.nft.safeTransferFrom(address(this), loan.terms.lender, loan.nftId);
+        termsData.nft.safeTransferFrom(address(this), termsData.lender, borrowData.nftId);
 
-            delete loanData[id];
-        }
+        ///////////////////////////////////////////////////
+
+        delete getAuctionStartTime[borrowHash];
+
+        delete getBorrowData[borrowHash];
     }
 
-    function checkTermsNotExpired(LoanTerms calldata terms) internal view returns (bool) {
-        return terms.deadline >= block.timestamp && terms.nonce <= nonce[terms.lender];
+    /*//////////////////////////////////////////////////////////////
+                           VALIDATION HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    function checkTermsNotExpired(LoanTerms memory terms) internal view returns (bool) {
+        return terms.deadline >= block.timestamp && terms.getNonce <= getNonce[terms.lender];
     }
 
-    function checkTermsFavorable(LoanTerms calldata terms1, LoanTerms calldata terms2) internal view returns (bool) {
+    function checkTermsFavorable(LoanTerms memory terms1, LoanTerms memory terms2) internal view returns (bool) {
         return terms2.nft == terms1.nft && terms2.minAmount >= terms1.minAmount
             && terms2.liquidationDurationBlocks >= terms1.liquidationDurationBlocks
             && terms2.interestRateBips <= terms1.interestRateBips;
     }
 
-    function hashLoamTerms(LoanTerms calldata loan) internal view returns (bytes32) {
+    /*//////////////////////////////////////////////////////////////
+                              HASH HELPERS
+    //////////////////////////////////////////////////////////////*/
+
+    function hashLoanTerms(LoanTerms memory l) internal view returns (bytes32) {
         return 0x0; // todo
     }
+
+    function hashBorrowData(BorrowData memory b) internal view returns (bytes32) {
+        return 0x0; // todo
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                           CALCULATION HELPERS
+    //////////////////////////////////////////////////////////////*/
 
     function calcInterest(uint40 time, uint96 debt, uint32 bips) internal view returns (uint256) {
         return 0; // TODO
