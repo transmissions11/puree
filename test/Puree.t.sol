@@ -15,8 +15,10 @@ contract PureeTest is Test {
     Puree public puree;
 
     uint256 constant LENDER_PK = 0xBEEF;
+    uint256 constant LENDER2_PK = 0xBABE;
 
     address immutable LENDER_ADDRESS = vm.addr(LENDER_PK);
+    address immutable LENDER2_ADDRESS = vm.addr(LENDER2_PK);
 
     LoanTerms terms;
 
@@ -27,10 +29,14 @@ contract PureeTest is Test {
 
         weth.mint(address(this), 500e18);
         weth.mint(LENDER_ADDRESS, 500e18);
+        weth.mint(LENDER2_ADDRESS, 500e18);
         nft.mint(address(this), 1);
         nft.mint(address(this), 2);
 
         vm.prank(LENDER_ADDRESS);
+        weth.approve(address(puree), type(uint256).max);
+
+        vm.prank(LENDER2_ADDRESS);
         weth.approve(address(puree), type(uint256).max);
 
         nft.setApprovalForAll(address(puree), true);
@@ -53,8 +59,14 @@ contract PureeTest is Test {
                                  HELPERS
     //////////////////////////////////////////////////////////////*/
 
-    function submitTerms() internal returns (bytes32) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.getTermsDigest(terms));
+    function submitLenderTerms() internal returns (bytes32) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.computeTermsDigest(terms));
+
+        return puree.submitTerms(terms, v, r, s);
+    }
+
+    function submitLender2Terms() internal returns (bytes32) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeTermsDigest(terms));
 
         return puree.submitTerms(terms, v, r, s);
     }
@@ -64,7 +76,7 @@ contract PureeTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function testSubmitTerms() public {
-        bytes32 termHash = submitTerms();
+        bytes32 termHash = submitLenderTerms();
 
         assertEq(termHash, puree.hashLoanTerms(terms));
 
@@ -82,7 +94,7 @@ contract PureeTest is Test {
     }
 
     function testSubmitTerms_invalidSignature() public {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.getTermsDigest(terms));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.computeTermsDigest(terms));
 
         terms.nonce = 1;
 
@@ -93,14 +105,14 @@ contract PureeTest is Test {
     function testSubmitTerms_expired() public {
         terms.deadline = uint40(block.timestamp - 1 days);
 
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.getTermsDigest(terms));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.computeTermsDigest(terms));
 
         vm.expectRevert("TERMS_EXPIRED");
         puree.submitTerms(terms, v, r, s);
     }
 
     function testSubmitTerms_alreadySubmitted() public {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.getTermsDigest(terms));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.computeTermsDigest(terms));
 
         puree.submitTerms(terms, v, r, s);
 
@@ -113,7 +125,7 @@ contract PureeTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function testBorrow() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
@@ -133,7 +145,7 @@ contract PureeTest is Test {
     }
 
     function testBorrow_invalidTerms() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         termsHash = bytes32(uint256(termsHash) + 1);
 
@@ -142,28 +154,28 @@ contract PureeTest is Test {
     }
 
     function testBorrow_unownedNFT() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         vm.expectRevert("WRONG_FROM");
         puree.newBorrow(termsHash, 999, 10e18);
     }
 
     function testBorrow_overMaxAmount() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         vm.expectRevert("INVALID_AMOUNT");
         puree.newBorrow(termsHash, 1, 21e18);
     }
 
     function testBorrow_underMinAmount() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         vm.expectRevert("INVALID_AMOUNT");
         puree.newBorrow(termsHash, 1, 9e18);
     }
 
     function testBorrow_overTotalAmount() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         puree.newBorrow(termsHash, 1, 20e18);
         puree.newBorrow(termsHash, 2, 10e18);
@@ -177,7 +189,7 @@ contract PureeTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function testRepayMaxManually() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
@@ -199,7 +211,7 @@ contract PureeTest is Test {
     }
 
     function testRepayPartial() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
@@ -221,7 +233,7 @@ contract PureeTest is Test {
     }
 
     function testRepayMaxAutomatically() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
@@ -243,7 +255,7 @@ contract PureeTest is Test {
     }
 
     function testRepayMaxAfterTime() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
@@ -267,7 +279,7 @@ contract PureeTest is Test {
     }
 
     function testRepay_invalidBorrow() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
@@ -278,7 +290,7 @@ contract PureeTest is Test {
     }
 
     function testRepay_overAmount() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
@@ -287,7 +299,7 @@ contract PureeTest is Test {
     }
 
     function testRepay_overAmountAfterTime() public {
-        bytes32 termsHash = submitTerms();
+        bytes32 termsHash = submitLenderTerms();
 
         bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
@@ -296,4 +308,193 @@ contract PureeTest is Test {
         vm.expectRevert(stdError.arithmeticError);
         puree.repay(borrowHash, 50e18);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                           INSTANT REFINANCING
+    //////////////////////////////////////////////////////////////*/
+
+    function testInstantLenderRefinance() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        terms.interestRateBips = 4000;
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrowHash, newTermsHash);
+
+        assertEq(puree.getTotalAmountConsumed(oldTermsHash), 0);
+        assertEq(puree.getTotalAmountConsumed(newTermsHash), 10e18);
+
+        assertEq(weth.balanceOf(LENDER_ADDRESS), 500e18);
+        assertEq(weth.balanceOf(LENDER2_ADDRESS), 490e18);
+        assertEq(weth.balanceOf(address(this)), 510e18);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        assertEq(borrowData.borrower, address(this));
+        assertEq(borrowData.termsHash, newTermsHash);
+        assertEq(borrowData.nftId, 1);
+        assertEq(borrowData.lastComputedDebt, 10e18);
+        assertEq(borrowData.lastTouchedTime, uint40(block.timestamp));
+    }
+
+    function testInstantLenderRefinance_invalidBorrow() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        terms.interestRateBips = 4000;
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        borrowHash = bytes32(uint256(borrowHash) + 1);
+
+        vm.expectRevert("NOT_LENDER");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrowHash, newTermsHash);
+    }
+
+    function testInstantLenderRefinance_invalidTerms() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        terms.interestRateBips = 4000;
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        newTermsHash = bytes32(uint256(newTermsHash) + 1); // invalidate the terms hash value
+
+        vm.expectRevert("TERMS_EXPIRED_OR_DO_NOT_EXIST");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrowHash, newTermsHash);
+    }
+
+    function testInstantLenderRefinance_unfavorableTerms() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        terms.interestRateBips = 6000;
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.expectRevert("TERMS_NOT_FAVORABLE");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrowHash, newTermsHash);
+    }
+
+    function testInstantLenderRefinance_expiredTerms() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        terms.interestRateBips = 4000;
+        terms.lender = LENDER2_ADDRESS;
+        terms.deadline = uint40(block.timestamp);
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.warp(block.timestamp + 1 days);
+
+        vm.expectRevert("TERMS_EXPIRED_OR_DO_NOT_EXIST");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrowHash, newTermsHash);
+    }
+
+    function testInstantLenderRefinance_capacityOverflow() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        terms.interestRateBips = 4000;
+        terms.lender = LENDER2_ADDRESS;
+        terms.totalAmount = 5e18;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.expectRevert("NEW_TERMS_AT_CAPACITY");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrowHash, newTermsHash);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             AUCTION KICKOFF
+    //////////////////////////////////////////////////////////////*/
+
+    function testKickoffRefinancingAuction() public {
+        bytes32 termsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+
+        assertEq(puree.getAuctionStartBlock(borrowHash), 0);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        assertEq(puree.getAuctionStartBlock(borrowHash), block.number);
+    }
+
+    function testKickoffRefinancingAuction_invalidBorrow() public {
+        bytes32 termsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+
+        borrowHash = bytes32(uint256(borrowHash) + 1);
+
+        vm.expectRevert("NOT_LENDER");
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+    }
+
+    function testKickoffRefinancingAuction_alreadyActive() public {
+        bytes32 termsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        vm.prank(LENDER_ADDRESS);
+        vm.expectRevert("AUCTION_ALREADY_STARTED");
+        puree.kickoffRefinancingAuction(borrowHash);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     REFINANCING AUCTION SETTLEMENT
+    //////////////////////////////////////////////////////////////*/
+
+    // function testSettleRefinancingAuction() public {
+    //     bytes32 oldTermsHash = submitLenderTerms();
+
+    //     bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+    //     vm.prank(LENDER_ADDRESS);
+    //     puree.kickoffRefinancingAuction(borrowHash);
+
+    //     vm.warp(block.timestamp + 1 days);
+
+    //     terms.interestRateBips = 4000;
+    //     terms.lender = LENDER2_ADDRESS;
+    //     bytes32 newTermsHash = submitLender2Terms();
+
+    //     vm.prank(LENDER_ADDRESS);
+    //     puree.instantLenderRefinance(borrowHash, newTermsHash);
+
+    //     assertEq(puree.getTotalAmountConsumed(oldTermsHash), 0);
+    //     assertEq(puree.getTotalAmountConsumed(newTermsHash), 10e18);
+
+    //     assertEq(weth.balanceOf(LENDER_ADDRESS), 500e18);
+    //     assertEq(weth.balanceOf(LENDER2_ADDRESS), 490e18);
+    //     assertEq(weth.balanceOf(address(this)), 510e18);
+
+    //     BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+    //     assertEq(borrowData.borrower, address(this));
+    //     assertEq(borrowData.termsHash, newTermsHash);
+    //     assertEq(borrowData.nftId, 1);
+    //     assertEq(borrowData.lastComputedDebt, 10e18);
+    //     assertEq(borrowData.lastTouchedTime, uint40(block.timestamp));
+    // }
 }
