@@ -118,7 +118,11 @@ contract Puree {
                                 CONSTANTS
     //////////////////////////////////////////////////////////////*/
 
-    uint256 internal constant LIQ_THRESHOLD = 100_000e18; // TODO
+    uint256 internal constant LIQ_THRESHOLD = 100_000; // TODO
+
+    int256 internal constant YEAR_WAD = 365 days * 1e18;
+
+    int256 internal immutable WAD_LOG_LIQ_THRESHOLD = wadLn(int256(LIQ_THRESHOLD * 1e18));
 
     ERC20 internal immutable weth;
 
@@ -420,7 +424,7 @@ contract Puree {
         require(debt >= newTermsData.minAmount && debt <= newTermsData.maxAmount, "INVALID_AMOUNT");
 
         // Calculate the current rate at which the dutch auction would close at.
-        uint256 r = calcAuctionRate(start, termsData.liquidationDurationBlocks);
+        uint256 r = calcAuctionRate(start, termsData.liquidationDurationBlocks, termsData.interestRateBips);
 
         // Ensure the rate is below the liquidation threshold.
         require(r < LIQ_THRESHOLD, "INSOLVENT");
@@ -467,7 +471,7 @@ contract Puree {
         LoanTerms memory termsData = getLoanTerms[borrowData.termsHash];
 
         // Calculate the current rate at which the dutch auction would close at.
-        uint256 r = calcAuctionRate(start, termsData.liquidationDurationBlocks);
+        uint256 r = calcAuctionRate(start, termsData.liquidationDurationBlocks, termsData.interestRateBips);
 
         // Ensure the rate is above or equal to the liquidation threshold.
         require(r >= LIQ_THRESHOLD, "NOT_INSOLVENT");
@@ -515,19 +519,28 @@ contract Puree {
         view
         returns (uint256)
     {
-        int256 yearWad = 365 days * 1e18;
-
-        int256 yearsWad = wadDiv(int256(block.timestamp - uint256(lastTouchedTime)) * 1e18, yearWad);
+        int256 yearsWad = wadDiv(int256(block.timestamp - uint256(lastTouchedTime)) * 1e18, YEAR_WAD);
 
         return uint256(wadMul(int256(uint256(lastComputedDebt)), wadExp(wadMul(yearsWad, bipsToSignedWads(bips)))));
     }
 
-    function calcAuctionRate(uint256 startBlock, uint32 durBlocks) internal view returns (uint256) {
-        return 0; // TODO:
+    // https://www.desmos.com/calculator/7ef4rtuzsh
+    function calcAuctionRate(uint256 startBlock, uint32 durBlocks, uint32 oldRate) internal view returns (uint256) {
+        int256 logOldRate = wadLn(bipsToSignedWads(oldRate));
+
+        int256 a = wadMul(wadDiv(2e18, int256(uint256(durBlocks) * 1e18)), WAD_LOG_LIQ_THRESHOLD - logOldRate);
+
+        int256 b = WAD_LOG_LIQ_THRESHOLD - (2 * logOldRate);
+
+        return signedWadsToBips(wadExp(wadMul(a, int256(uint256(block.number - startBlock) * 1e18)) - b));
     }
 
     function bipsToSignedWads(uint256 bips) internal pure returns (int256) {
         return int256((bips * 1e18) / 10000);
+    }
+
+    function signedWadsToBips(int256 wads) internal pure returns (uint256) {
+        return uint256((wads * 10000) / 1e18);
     }
 
     /*//////////////////////////////////////////////////////////////
