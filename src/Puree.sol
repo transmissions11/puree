@@ -253,6 +253,9 @@ contract Puree {
         // Get the borrow data associated with the hash.
         BorrowData storage borrowData = getBorrowData[borrowHash];
 
+        // Ensure the caller is the borrower.
+        require(msg.sender == borrowData.borrower, "NOT_BORROWER");
+
         // Cache the terms hash associated with the borrow data.
         bytes32 termsHash = borrowData.termsHash;
 
