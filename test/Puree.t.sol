@@ -707,4 +707,68 @@ contract PureeTest is Test {
         vm.expectRevert("INSOLVENT");
         puree.settleRefinancingAuction(borrowHash, newTermsHash);
     }
+
+    /*//////////////////////////////////////////////////////////////
+                               LIQUIDATION
+    //////////////////////////////////////////////////////////////*/
+
+    function testLiquidate() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        vm.roll(block.number + 100);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
+
+        uint256 newRate = puree.calcRefinancingAuctionRate(
+            puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+        );
+
+        assertEq(newRate, puree.LIQ_THRESHOLD());
+
+        puree.liquidate(borrowHash);
+
+        assertEq(puree.getAuctionStartBlock(borrowHash), 0);
+
+        assertEq(nft.ownerOf(borrowData.nftId), LENDER_ADDRESS);
+    }
+
+    function testLiquidate_noActiveAuction() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.expectRevert("NO_ACTIVE_AUCTION");
+        puree.liquidate(borrowHash);
+    }
+
+    function testLiquidate_notInsolvent() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        vm.roll(block.number + 55);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
+
+        uint256 newRate = puree.calcRefinancingAuctionRate(
+            puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+        );
+
+        assertEq(newRate, 6747);
+
+        vm.expectRevert("NOT_INSOLVENT");
+        puree.liquidate(borrowHash);
+    }
 }
