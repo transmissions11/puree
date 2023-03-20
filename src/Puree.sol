@@ -549,6 +549,7 @@ contract Puree {
 
         int256 b = WAD_LOG_LIQ_THRESHOLD - (2 * logOldRate);
 
+        // We add 1 because otherwise rounding errors and truncation mean we will be off by 1 from LIQ_THRESHOLD by the end.
         return signedWadsToBips(wadExp(wadMul(a, int256(uint256(block.number - startBlock) * 1e18)) - b)) + 1;
     }
 
