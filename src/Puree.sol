@@ -6,8 +6,6 @@ import "solmate/tokens/ERC20.sol";
 import "solmate/utils/SafeTransferLib.sol";
 import "solmate/utils/SignedWadMath.sol";
 
-import "forge-std/console2.sol";
-
 // TODO: How to revoke loan offer once submitted?
 
 /// @dev Stores the data associated with a loan terms offer.
