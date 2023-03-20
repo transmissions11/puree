@@ -357,6 +357,21 @@ contract PureeTest is Test {
         puree.instantLenderRefinance(borrowHash, newTermsHash);
     }
 
+    function testInstantLenderRefinance_invalidAmount() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        terms.interestRateBips = 4000;
+        terms.lender = LENDER2_ADDRESS;
+        terms.minAmount = 999999e18;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.expectRevert("INVALID_AMOUNT");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrowHash, newTermsHash);
+    }
+
     function testInstantLenderRefinance_invalidTerms() public {
         bytes32 oldTermsHash = submitLenderTerms();
 
@@ -505,9 +520,9 @@ contract PureeTest is Test {
     }
 
     function testSettleRefinancingAuctionPricing() public {
-        bytes32 oldTermsHash = submitLenderTerms();
+        bytes32 termsHash = submitLenderTerms();
 
-        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
         vm.prank(LENDER_ADDRESS);
         puree.kickoffRefinancingAuction(borrowHash);
@@ -713,9 +728,9 @@ contract PureeTest is Test {
     //////////////////////////////////////////////////////////////*/
 
     function testLiquidate() public {
-        bytes32 oldTermsHash = submitLenderTerms();
+        bytes32 termsHash = submitLenderTerms();
 
-        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
         vm.prank(LENDER_ADDRESS);
         puree.kickoffRefinancingAuction(borrowHash);
@@ -740,18 +755,18 @@ contract PureeTest is Test {
     }
 
     function testLiquidate_noActiveAuction() public {
-        bytes32 oldTermsHash = submitLenderTerms();
+        bytes32 termsHash = submitLenderTerms();
 
-        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
         vm.expectRevert("NO_ACTIVE_AUCTION");
         puree.liquidate(borrowHash);
     }
 
     function testLiquidate_notInsolvent() public {
-        bytes32 oldTermsHash = submitLenderTerms();
+        bytes32 termsHash = submitLenderTerms();
 
-        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
 
         vm.prank(LENDER_ADDRESS);
         puree.kickoffRefinancingAuction(borrowHash);
@@ -770,5 +785,114 @@ contract PureeTest is Test {
 
         vm.expectRevert("NOT_INSOLVENT");
         puree.liquidate(borrowHash);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                             FURTHER BORROW
+    //////////////////////////////////////////////////////////////*/
+
+    function testFurtherBorrow() public {
+        bytes32 termsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+
+        puree.furtherBorrow(borrowHash, 1e18);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        assertEq(borrowData.lastComputedDebt, 11e18);
+    }
+
+    function testFurtherBorrow_notBorrower() public {
+        bytes32 termsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+
+        vm.prank(address(0xBEEFBABE));
+        vm.expectRevert("NOT_BORROWER");
+        puree.furtherBorrow(borrowHash, 1e18);
+    }
+
+    function testFurtherBorrow_termsExpired() public {
+        bytes32 termsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+
+        vm.warp(terms.deadline + 1 days);
+
+        vm.expectRevert("TERMS_EXPIRED_OR_DO_NOT_EXIST");
+        puree.furtherBorrow(borrowHash, 1e18);
+    }
+
+    function testFurtherBorrow_termsDoNotExist() public {
+        bytes32 termsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+
+        borrowHash = bytes32(uint256(borrowHash) + 1);
+
+        vm.expectRevert("NOT_BORROWER");
+        puree.furtherBorrow(borrowHash, 1e18);
+    }
+
+    function testFurtherBorrow_invalidAmount() public {
+        bytes32 termsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+
+        vm.expectRevert("INVALID_AMOUNT");
+        puree.furtherBorrow(borrowHash, 11e18);
+    }
+
+    function testFurtherBorrow_atCapacity() public {
+        bytes32 termsHash = submitLenderTerms();
+
+        puree.newBorrow(termsHash, 2, 20e18);
+        bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+
+        vm.expectRevert("AT_CAPACITY");
+        puree.furtherBorrow(borrowHash, 1e18);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                            NONCE MANAGEMENT
+    //////////////////////////////////////////////////////////////*/
+
+    function testBumpNonce() public {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.computeTermsDigest(terms));
+
+        assertEq(puree.getNonce(LENDER_ADDRESS), 0);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.bumpNonce(1);
+
+        assertEq(puree.getNonce(LENDER_ADDRESS), 1);
+
+        vm.expectRevert("TERMS_EXPIRED");
+        puree.submitTerms(terms, v, r, s);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                         SUBMIT TERMS AND BORROW
+    //////////////////////////////////////////////////////////////*/
+
+    function testSubmitTermsAndBorrow() public {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.computeTermsDigest(terms));
+
+        bytes32 borrowHash = puree.submitTermsAndBorrow(terms, v, r, s, 1, 10e18);
+
+        assertEq(weth.balanceOf(address(this)), 510e18);
+        assertEq(weth.balanceOf(LENDER_ADDRESS), 490e18);
+        assertEq(nft.ownerOf(1), address(puree));
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        assertEq(borrowData.borrower, address(this));
+        assertEq(borrowData.termsHash, borrowData.termsHash);
+        assertEq(borrowData.nftId, 1);
+        assertEq(borrowData.lastComputedDebt, 10e18);
+        assertEq(borrowData.lastTouchedTime, uint40(block.timestamp));
+
+        assertEq(puree.getTotalAmountConsumed(borrowData.termsHash), 10e18);
     }
 }

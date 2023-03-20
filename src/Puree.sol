@@ -170,11 +170,13 @@ contract Puree {
     /// @param r A fragment of the terms' lender's ECDSA signature.
     /// @param s A fragment of the terms' lender's ECDSA signature.
     /// @param nftId The NFT ID to borrow against.
+    /// @return borrowHash The hash of the borrow data.
     function submitTermsAndBorrow(LoanTerms calldata terms, uint8 v, bytes32 r, bytes32 s, uint256 nftId, uint96 amt)
         external
+        returns (bytes32 borrowHash)
     {
         bytes32 termsHash = submitTerms(terms, v, r, s); // Submit the terms.
-        newBorrow(termsHash, nftId, amt); // Borrow against the terms.
+        return newBorrow(termsHash, nftId, amt); // Borrow against the terms.
     }
 
     /// @notice Borrow against a a loan terms offer.
