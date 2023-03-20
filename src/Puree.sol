@@ -6,7 +6,10 @@ import "solmate/tokens/ERC20.sol";
 import "solmate/utils/SafeTransferLib.sol";
 import "solmate/utils/SignedWadMath.sol";
 
-// TODO: How to revoke loan offer once submitted?
+// TODO: How to revoke loan offer once submitted? Do deadline/nonce apply just in
+// TODO: terms of getting the offers submitted or on future borrows and such.
+// Unclear. If so, some large optimizations can be made by not storing them.
+// TODO: Technically borrow hashes are desyncing right now after refinance(s) since termsHash changes.
 
 /// @dev Stores the data associated with a loan terms offer.
 /// @param lender The address of the lender.
