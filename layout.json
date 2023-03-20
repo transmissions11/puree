@@ -1,0 +1,240 @@
+{
+  "storage": [
+    {
+      "astId": 27259,
+      "contract": "src/Puree.sol:Puree",
+      "label": "getLoanTerms",
+      "offset": 0,
+      "slot": "0",
+      "type": "t_mapping(t_bytes32,t_struct(LoanTerms)27191_storage)"
+    },
+    {
+      "astId": 27277,
+      "contract": "src/Puree.sol:Puree",
+      "label": "getBorrowData",
+      "offset": 0,
+      "slot": "1",
+      "type": "t_mapping(t_bytes32,t_struct(BorrowData)27202_storage)"
+    },
+    {
+      "astId": 27294,
+      "contract": "src/Puree.sol:Puree",
+      "label": "getTotalAmountConsumed",
+      "offset": 0,
+      "slot": "2",
+      "type": "t_mapping(t_bytes32,t_uint256)"
+    },
+    {
+      "astId": 27298,
+      "contract": "src/Puree.sol:Puree",
+      "label": "getAuctionStartBlock",
+      "offset": 0,
+      "slot": "3",
+      "type": "t_mapping(t_bytes32,t_uint256)"
+    },
+    {
+      "astId": 27302,
+      "contract": "src/Puree.sol:Puree",
+      "label": "getNonce",
+      "offset": 0,
+      "slot": "4",
+      "type": "t_mapping(t_address,t_uint256)"
+    }
+  ],
+  "types": {
+    "t_address": {
+      "encoding": "inplace",
+      "label": "address",
+      "numberOfBytes": "20"
+    },
+    "t_bytes32": {
+      "encoding": "inplace",
+      "label": "bytes32",
+      "numberOfBytes": "32"
+    },
+    "t_contract(ERC721)26535": {
+      "encoding": "inplace",
+      "label": "contract ERC721",
+      "numberOfBytes": "20"
+    },
+    "t_mapping(t_address,t_uint256)": {
+      "encoding": "mapping",
+      "key": "t_address",
+      "label": "mapping(address => uint256)",
+      "numberOfBytes": "32",
+      "value": "t_uint256"
+    },
+    "t_mapping(t_bytes32,t_struct(BorrowData)27202_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct BorrowData)",
+      "numberOfBytes": "32",
+      "value": "t_struct(BorrowData)27202_storage"
+    },
+    "t_mapping(t_bytes32,t_struct(LoanTerms)27191_storage)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => struct LoanTerms)",
+      "numberOfBytes": "32",
+      "value": "t_struct(LoanTerms)27191_storage"
+    },
+    "t_mapping(t_bytes32,t_uint256)": {
+      "encoding": "mapping",
+      "key": "t_bytes32",
+      "label": "mapping(bytes32 => uint256)",
+      "numberOfBytes": "32",
+      "value": "t_uint256"
+    },
+    "t_struct(BorrowData)27202_storage": {
+      "encoding": "inplace",
+      "label": "struct BorrowData",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "astId": 27193,
+          "contract": "src/Puree.sol:Puree",
+          "label": "termsHash",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_bytes32"
+        },
+        {
+          "astId": 27195,
+          "contract": "src/Puree.sol:Puree",
+          "label": "borrower",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_address"
+        },
+        {
+          "astId": 27197,
+          "contract": "src/Puree.sol:Puree",
+          "label": "nftId",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint256"
+        },
+        {
+          "astId": 27199,
+          "contract": "src/Puree.sol:Puree",
+          "label": "lastComputedDebt",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_uint96"
+        },
+        {
+          "astId": 27201,
+          "contract": "src/Puree.sol:Puree",
+          "label": "lastTouchedTime",
+          "offset": 12,
+          "slot": "3",
+          "type": "t_uint40"
+        }
+      ]
+    },
+    "t_struct(LoanTerms)27191_storage": {
+      "encoding": "inplace",
+      "label": "struct LoanTerms",
+      "numberOfBytes": "128",
+      "members": [
+        {
+          "astId": 27173,
+          "contract": "src/Puree.sol:Puree",
+          "label": "lender",
+          "offset": 0,
+          "slot": "0",
+          "type": "t_address"
+        },
+        {
+          "astId": 27176,
+          "contract": "src/Puree.sol:Puree",
+          "label": "nft",
+          "offset": 0,
+          "slot": "1",
+          "type": "t_contract(ERC721)26535"
+        },
+        {
+          "astId": 27178,
+          "contract": "src/Puree.sol:Puree",
+          "label": "maxAmount",
+          "offset": 20,
+          "slot": "1",
+          "type": "t_uint96"
+        },
+        {
+          "astId": 27180,
+          "contract": "src/Puree.sol:Puree",
+          "label": "minAmount",
+          "offset": 0,
+          "slot": "2",
+          "type": "t_uint96"
+        },
+        {
+          "astId": 27182,
+          "contract": "src/Puree.sol:Puree",
+          "label": "totalAmount",
+          "offset": 12,
+          "slot": "2",
+          "type": "t_uint96"
+        },
+        {
+          "astId": 27184,
+          "contract": "src/Puree.sol:Puree",
+          "label": "liquidationDurationBlocks",
+          "offset": 24,
+          "slot": "2",
+          "type": "t_uint16"
+        },
+        {
+          "astId": 27186,
+          "contract": "src/Puree.sol:Puree",
+          "label": "interestRateBips",
+          "offset": 26,
+          "slot": "2",
+          "type": "t_uint32"
+        },
+        {
+          "astId": 27188,
+          "contract": "src/Puree.sol:Puree",
+          "label": "deadline",
+          "offset": 0,
+          "slot": "3",
+          "type": "t_uint40"
+        },
+        {
+          "astId": 27190,
+          "contract": "src/Puree.sol:Puree",
+          "label": "nonce",
+          "offset": 5,
+          "slot": "3",
+          "type": "t_uint32"
+        }
+      ]
+    },
+    "t_uint16": {
+      "encoding": "inplace",
+      "label": "uint16",
+      "numberOfBytes": "2"
+    },
+    "t_uint256": {
+      "encoding": "inplace",
+      "label": "uint256",
+      "numberOfBytes": "32"
+    },
+    "t_uint32": {
+      "encoding": "inplace",
+      "label": "uint32",
+      "numberOfBytes": "4"
+    },
+    "t_uint40": {
+      "encoding": "inplace",
+      "label": "uint40",
+      "numberOfBytes": "5"
+    },
+    "t_uint96": {
+      "encoding": "inplace",
+      "label": "uint96",
+      "numberOfBytes": "12"
+    }
+  }
+}
