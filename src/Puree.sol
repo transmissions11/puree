@@ -57,11 +57,11 @@ contract Puree {
         "TermsOffer(address lender,address nft,uint96 maxAmount,uint96 minAmount,uint96 totalAmount,uint16 liquidationDurationBlocks,uint32 interestRateBips,uint40 deadline,uint32 nonce)"
     );
 
-    uint256 internal constant LIQ_THRESHOLD = 100_000; // TODO
+    uint256 public constant LIQ_THRESHOLD = 100_000;
+
+    int256 internal immutable WAD_LOG_LIQ_THRESHOLD = wadLn(bipsToSignedWads(LIQ_THRESHOLD));
 
     int256 internal constant YEAR_WAD = 365 days * 1e18;
-
-    int256 internal immutable WAD_LOG_LIQ_THRESHOLD = wadLn(int256(LIQ_THRESHOLD * 1e18));
 
     ERC20 internal immutable weth;
 
@@ -437,7 +437,7 @@ contract Puree {
         require(
             termsData.nft == termsData.nft && newTermsData.minAmount >= termsData.minAmount
                 && newTermsData.liquidationDurationBlocks >= termsData.liquidationDurationBlocks
-                && r <= termsData.interestRateBips, // Check against the current auction-set rate
+                && newTermsData.interestRateBips <= r, // Check against the current auction-set rate.
             "TERMS_NOT_REASONABLE"
         );
 
@@ -450,11 +450,13 @@ contract Puree {
         ///////////////////////////////////////////////////////////
 
         // Require the new lender to buy the old lender out.
-        weth.safeTransferFrom(msg.sender, termsData.lender, debt);
+        weth.safeTransferFrom(newTermsData.lender, termsData.lender, debt);
 
         // Update the debt calculation variables to account for the new rate.
         borrowData.lastComputedDebt = uint96(debt);
         borrowData.lastTouchedTime = uint40(block.timestamp);
+
+        borrowData.termsHash = newTermsHash; // Update the terms hash.
 
         delete getAuctionStartBlock[borrowHash]; // Mark the auction as completed.
     }
@@ -504,13 +506,13 @@ contract Puree {
 
     /// @dev Hashes terms data.
     /// @param l The terms data to hash.
-    function hashLoanTerms(LoanTerms memory l) public view returns (bytes32) {
+    function hashLoanTerms(LoanTerms memory l) public pure returns (bytes32) {
         return keccak256(abi.encode(l));
     }
 
     /// @dev Hashes borrow data.
     /// @param b The borrow data to hash.
-    function hashBorrowData(BorrowData memory b) public view returns (bytes32) {
+    function hashBorrowData(BorrowData memory b) public pure returns (bytes32) {
         return keccak256(abi.encode(b));
     }
 
@@ -537,7 +539,7 @@ contract Puree {
     /// @param startBlock The block the auction started at.
     /// @param durBlocks The duration of the auction in blocks.
     function calcRefinancingAuctionRate(uint256 startBlock, uint32 durBlocks, uint32 oldRate)
-        internal
+        public
         view
         returns (uint256)
     {
@@ -547,7 +549,7 @@ contract Puree {
 
         int256 b = WAD_LOG_LIQ_THRESHOLD - (2 * logOldRate);
 
-        return signedWadsToBips(wadExp(wadMul(a, int256(uint256(block.number - startBlock) * 1e18)) - b));
+        return signedWadsToBips(wadExp(wadMul(a, int256(uint256(block.number - startBlock) * 1e18)) - b)) + 1;
     }
 
     /// @dev Converts an integer bips value to a signed wad value.

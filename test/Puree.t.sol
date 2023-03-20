@@ -174,7 +174,7 @@ contract PureeTest is Test {
         puree.newBorrow(termsHash, 1, 9e18);
     }
 
-    function testBorrow_overTotalAmount() public {
+    function testBorrow_capacityOverflow() public {
         bytes32 termsHash = submitLenderTerms();
 
         puree.newBorrow(termsHash, 1, 20e18);
@@ -465,36 +465,246 @@ contract PureeTest is Test {
                      REFINANCING AUCTION SETTLEMENT
     //////////////////////////////////////////////////////////////*/
 
-    // function testSettleRefinancingAuction() public {
-    //     bytes32 oldTermsHash = submitLenderTerms();
+    function testSettleRefinancingAuction() public {
+        bytes32 oldTermsHash = submitLenderTerms();
 
-    //     bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
 
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.kickoffRefinancingAuction(borrowHash);
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
 
-    //     vm.warp(block.timestamp + 1 days);
+        vm.roll(block.number + 55);
 
-    //     terms.interestRateBips = 4000;
-    //     terms.lender = LENDER2_ADDRESS;
-    //     bytes32 newTermsHash = submitLender2Terms();
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
 
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.instantLenderRefinance(borrowHash, newTermsHash);
+        LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
 
-    //     assertEq(puree.getTotalAmountConsumed(oldTermsHash), 0);
-    //     assertEq(puree.getTotalAmountConsumed(newTermsHash), 10e18);
+        uint256 newRate = puree.calcRefinancingAuctionRate(
+            puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+        );
 
-    //     assertEq(weth.balanceOf(LENDER_ADDRESS), 500e18);
-    //     assertEq(weth.balanceOf(LENDER2_ADDRESS), 490e18);
-    //     assertEq(weth.balanceOf(address(this)), 510e18);
+        assertEq(newRate, 6747);
 
-    //     BorrowData memory borrowData = puree.getBorrow(borrowHash);
+        terms.interestRateBips = uint32(newRate);
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
 
-    //     assertEq(borrowData.borrower, address(this));
-    //     assertEq(borrowData.termsHash, newTermsHash);
-    //     assertEq(borrowData.nftId, 1);
-    //     assertEq(borrowData.lastComputedDebt, 10e18);
-    //     assertEq(borrowData.lastTouchedTime, uint40(block.timestamp));
-    // }
+        puree.settleRefinancingAuction(borrowHash, newTermsHash);
+
+        assertEq(puree.getAuctionStartBlock(borrowHash), 0);
+
+        assertEq(puree.getBorrow(borrowHash).termsHash, newTermsHash);
+        assertEq(puree.getBorrow(borrowHash).lastComputedDebt, 10e18);
+        assertEq(puree.getBorrow(borrowHash).lastTouchedTime, uint40(block.timestamp));
+
+        assertEq(puree.getTotalAmountConsumed(oldTermsHash), 0);
+        assertEq(puree.getTotalAmountConsumed(newTermsHash), 10e18);
+
+        assertEq(weth.balanceOf(LENDER_ADDRESS), 500e18);
+        assertEq(weth.balanceOf(LENDER2_ADDRESS), 490e18);
+    }
+
+    function testSettleRefinancingAuctionPricing() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        uint256 lastRate = 0;
+
+        for (uint256 i = 0; i < 100; i++) {
+            vm.roll(block.number + 1);
+
+            BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+            LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
+
+            uint256 newRate = puree.calcRefinancingAuctionRate(
+                puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+            );
+
+            assertGe(newRate, lastRate);
+
+            if (i == 49) assertEq(newRate, terms.interestRateBips);
+            if (newRate == 99) assertEq(newRate, puree.LIQ_THRESHOLD());
+
+            lastRate = newRate;
+        }
+    }
+
+    function testSettleRefinancingAuction_invalidBorrow() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        vm.roll(block.number + 55);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
+
+        uint256 newRate = puree.calcRefinancingAuctionRate(
+            puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+        );
+
+        assertEq(newRate, 6747);
+
+        terms.interestRateBips = uint32(newRate);
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        borrowHash = bytes32(uint256(borrowHash) + 1);
+
+        vm.expectRevert("NO_ACTIVE_AUCTION");
+        puree.settleRefinancingAuction(borrowHash, newTermsHash);
+    }
+
+    function testSettleRefinancingAuction_unfairTerms() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        vm.roll(block.number + 55);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
+
+        uint256 newRate = puree.calcRefinancingAuctionRate(
+            puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+        );
+
+        assertEq(newRate, 6747);
+
+        terms.interestRateBips = uint32(newRate * 2);
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.expectRevert("TERMS_NOT_REASONABLE");
+        puree.settleRefinancingAuction(borrowHash, newTermsHash);
+    }
+
+    function testSettleRefinancingAuction_capacityOverflow() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        vm.roll(block.number + 55);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
+
+        uint256 newRate = puree.calcRefinancingAuctionRate(
+            puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+        );
+
+        assertEq(newRate, 6747);
+
+        terms.interestRateBips = uint32(newRate);
+        terms.lender = LENDER2_ADDRESS;
+        terms.totalAmount = 5e18;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.expectRevert("NEW_TERMS_AT_CAPACITY");
+        puree.settleRefinancingAuction(borrowHash, newTermsHash);
+    }
+
+    function testSettleRefinancingAuction_termsExpired() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        vm.roll(block.number + 55);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
+
+        uint256 newRate = puree.calcRefinancingAuctionRate(
+            puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+        );
+
+        assertEq(newRate, 6747);
+
+        terms.interestRateBips = uint32(newRate);
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.warp(terms.deadline + 1 days);
+
+        vm.expectRevert("TERMS_EXPIRED_OR_DO_NOT_EXIST");
+        puree.settleRefinancingAuction(borrowHash, newTermsHash);
+    }
+
+    function testSettleRefinancingAuction_invalidAmount() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        vm.roll(block.number + 55);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
+
+        uint256 newRate = puree.calcRefinancingAuctionRate(
+            puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+        );
+
+        assertEq(newRate, 6747);
+
+        terms.interestRateBips = uint32(newRate);
+        terms.maxAmount = 5e18;
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.expectRevert("INVALID_AMOUNT");
+        puree.settleRefinancingAuction(borrowHash, newTermsHash);
+    }
+
+    function testSettleRefinancingAuction_insolvent() public {
+        bytes32 oldTermsHash = submitLenderTerms();
+
+        bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrowHash);
+
+        vm.roll(block.number + 100);
+
+        BorrowData memory borrowData = puree.getBorrow(borrowHash);
+
+        LoanTerms memory termsData = puree.getTerms(borrowData.termsHash);
+
+        uint256 newRate = puree.calcRefinancingAuctionRate(
+            puree.getAuctionStartBlock(borrowHash), termsData.liquidationDurationBlocks, termsData.interestRateBips
+        );
+
+        assertEq(newRate, puree.LIQ_THRESHOLD());
+
+        terms.interestRateBips = uint32(newRate);
+        terms.lender = LENDER2_ADDRESS;
+        bytes32 newTermsHash = submitLender2Terms();
+
+        vm.expectRevert("INSOLVENT");
+        puree.settleRefinancingAuction(borrowHash, newTermsHash);
+    }
 }
