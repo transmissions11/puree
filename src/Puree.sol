@@ -211,7 +211,13 @@ contract Puree {
         ///////////////////////////////////////////////////////////////////
 
         // Create a new borrow data struct with a reference to the terms, the borrower, the nft, the amount, and the time.
-        BorrowData memory data = BorrowData(termsHash, msg.sender, nftId, amt, uint40(block.timestamp));
+        BorrowData memory data = BorrowData({
+            termsHash: termsHash,
+            borrower: msg.sender,
+            nftId: nftId,
+            lastComputedDebt: amt,
+            lastTouchedTime: uint40(block.timestamp)
+        });
 
         getBorrowData[borrowHash = hashBorrowData(data)] = data; // Store the borrow data.
     }
