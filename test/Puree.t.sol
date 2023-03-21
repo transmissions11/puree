@@ -201,7 +201,7 @@ contract PureeTest is Test {
         puree.furtherBorrow(borrow, borrowId, 21e18);
     }
 
-    function testFurtherBorrow_atCapacity() public {
+    function testFurtherBorrow_capacityOverflow() public {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER_PK, puree.computeOfferDigest(offer));
 
         puree.newBorrow(offer, v, r, s, 1, 20e18);
@@ -375,155 +375,180 @@ contract PureeTest is Test {
                            INSTANT REFINANCING
     //////////////////////////////////////////////////////////////*/
 
-    // function testInstantLenderRefinance() public {
-    //     bytes32 oldTermsHash = submitLenderTerms();
+    function testInstantLenderRefinance() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
-    //     bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        offer.terms.interestRateBips = 4000;
+        offer.terms.lender = LENDER2_ADDRESS;
 
-    //     terms.interestRateBips = 4000;
-    //     terms.lender = LENDER2_ADDRESS;
-    //     bytes32 newTermsHash = submitLender2Terms();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeOfferDigest(offer));
 
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.instantLenderRefinance(borrowHash, newTermsHash);
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrow, borrowId, offer, v, r, s);
 
-    //     assertEq(puree.getTotalAmountConsumed(oldTermsHash), 0);
-    //     assertEq(puree.getTotalAmountConsumed(newTermsHash), 10e18);
+        assertEq(puree.getTotalAmountOfTermsConsumed(keccak256(abi.encode(borrow.terms))), 0);
+        assertEq(puree.getTotalAmountOfTermsConsumed(keccak256(abi.encode(offer.terms))), 10e18);
 
-    //     assertEq(weth.balanceOf(LENDER_ADDRESS), 500e18);
-    //     assertEq(weth.balanceOf(LENDER2_ADDRESS), 490e18);
-    //     assertEq(weth.balanceOf(address(this)), 510e18);
+        assertEq(weth.balanceOf(LENDER_ADDRESS), 500e18);
+        assertEq(weth.balanceOf(LENDER2_ADDRESS), 490e18);
+        assertEq(weth.balanceOf(address(this)), 510e18);
 
-    //     BorrowData memory borrowData = puree.getBorrow(borrowHash);
+        bytes32 borrowHash = puree.getBorrowHash(borrowId);
 
-    //     assertEq(borrowData.borrower, address(this));
-    //     assertEq(borrowData.termsHash, newTermsHash);
-    //     assertEq(borrowData.nftId, 1);
-    //     assertEq(borrowData.lastComputedDebt, 10e18);
-    //     assertEq(borrowData.lastTouchedTime, uint40(block.timestamp));
-    // }
+        assertEq(
+            borrowHash,
+            keccak256(
+                abi.encode(
+                    Borrow({
+                        terms: offer.terms,
+                        borrower: borrow.borrower,
+                        nftId: borrow.nftId,
+                        lastComputedDebt: uint96(10e18),
+                        lastTouchedTime: uint40(block.timestamp),
+                        auctionStartBlock: borrow.auctionStartBlock
+                    })
+                )
+            )
+        );
+    }
 
-    // function testInstantLenderRefinance_invalidBorrow() public {
-    //     bytes32 oldTermsHash = submitLenderTerms();
+    function testInstantLenderRefinance_invalidBorrow() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
-    //     bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        offer.terms.interestRateBips = 4000;
+        offer.terms.lender = LENDER2_ADDRESS;
 
-    //     terms.interestRateBips = 4000;
-    //     terms.lender = LENDER2_ADDRESS;
-    //     bytes32 newTermsHash = submitLender2Terms();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeOfferDigest(offer));
 
-    //     borrowHash = bytes32(uint256(borrowHash) + 1);
+        vm.expectRevert("INVALID_BORROW_PREIMAGE");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrow, borrowId + 1, offer, v, r, s);
+    }
 
-    //     vm.expectRevert("NOT_LENDER");
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.instantLenderRefinance(borrowHash, newTermsHash);
-    // }
+    function testInstantLenderRefinance_invalidAmount() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
-    // function testInstantLenderRefinance_invalidAmount() public {
-    //     bytes32 oldTermsHash = submitLenderTerms();
+        vm.warp(block.timestamp + (365 days) * 10);
 
-    //     bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        assertEq(
+            puree.computeCurrentDebt(borrow.lastTouchedTime, borrow.lastComputedDebt, borrow.terms.interestRateBips),
+            1484.13159102576603421e18
+        );
 
-    //     terms.interestRateBips = 4000;
-    //     terms.lender = LENDER2_ADDRESS;
-    //     terms.minAmount = 999999e18;
-    //     bytes32 newTermsHash = submitLender2Terms();
+        offer.terms.interestRateBips = 4000;
+        offer.terms.lender = LENDER2_ADDRESS;
+        offer.deadline = uint40(block.timestamp + 1 days);
 
-    //     vm.expectRevert("INVALID_AMOUNT");
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.instantLenderRefinance(borrowHash, newTermsHash);
-    // }
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeOfferDigest(offer));
 
-    // function testInstantLenderRefinance_invalidTerms() public {
-    //     bytes32 oldTermsHash = submitLenderTerms();
+        vm.expectRevert("iNVALID_DEBT_AMOUNT");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrow, borrowId, offer, v, r, s);
+    }
 
-    //     bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+    function testInstantLenderRefinance_notLender() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
-    //     terms.interestRateBips = 4000;
-    //     terms.lender = LENDER2_ADDRESS;
-    //     bytes32 newTermsHash = submitLender2Terms();
+        offer.terms.interestRateBips = 4000;
+        offer.terms.lender = LENDER2_ADDRESS;
+        offer.deadline = uint40(block.timestamp + 1 days);
 
-    //     newTermsHash = bytes32(uint256(newTermsHash) + 1); // invalidate the terms hash value
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeOfferDigest(offer));
 
-    //     vm.expectRevert("TERMS_EXPIRED_OR_DO_NOT_EXIST");
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.instantLenderRefinance(borrowHash, newTermsHash);
-    // }
+        vm.expectRevert("NOT_LENDER");
+        puree.instantLenderRefinance(borrow, borrowId, offer, v, r, s);
+    }
 
-    // function testInstantLenderRefinance_unfavorableTerms() public {
-    //     bytes32 oldTermsHash = submitLenderTerms();
+    function testInstantLenderRefinance_unfavorableTerms() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
-    //     bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        offer.terms.minAmount = 9999999999e18;
+        offer.terms.lender = LENDER2_ADDRESS;
+        offer.deadline = uint40(block.timestamp + 1 days);
 
-    //     terms.interestRateBips = 6000;
-    //     terms.lender = LENDER2_ADDRESS;
-    //     bytes32 newTermsHash = submitLender2Terms();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeOfferDigest(offer));
 
-    //     vm.expectRevert("TERMS_NOT_FAVORABLE");
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.instantLenderRefinance(borrowHash, newTermsHash);
-    // }
+        vm.expectRevert("TERMS_NOT_FAVORABLE");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrow, borrowId, offer, v, r, s);
+    }
 
-    // function testInstantLenderRefinance_expiredTerms() public {
-    //     bytes32 oldTermsHash = submitLenderTerms();
+    function testInstantLenderRefinance_expiredOffer() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
-    //     bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        offer.terms.interestRateBips = 4000;
+        offer.terms.lender = LENDER2_ADDRESS;
+        offer.deadline = uint40(block.timestamp - 1 days);
 
-    //     terms.interestRateBips = 4000;
-    //     terms.lender = LENDER2_ADDRESS;
-    //     terms.deadline = uint40(block.timestamp);
-    //     bytes32 newTermsHash = submitLender2Terms();
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeOfferDigest(offer));
 
-    //     vm.warp(block.timestamp + 1 days);
+        vm.expectRevert("OFFER_EXPIRED");
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrow, borrowId, offer, v, r, s);
+    }
 
-    //     vm.expectRevert("TERMS_EXPIRED_OR_DO_NOT_EXIST");
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.instantLenderRefinance(borrowHash, newTermsHash);
-    // }
+    function testInstantLenderRefinance_capacityOverflow() public {
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(LENDER_PK, puree.computeOfferDigest(offer));
 
-    // function testInstantLenderRefinance_capacityOverflow() public {
-    //     bytes32 oldTermsHash = submitLenderTerms();
+        Offer memory oldOffer = offer;
 
-    //     bytes32 borrowHash = puree.newBorrow(oldTermsHash, 1, 10e18);
+        puree.newBorrow(offer, v1, r1, s1, 1, 10e18);
+        puree.newBorrow(offer, v1, r1, s1, 2, 20e18);
 
-    //     terms.interestRateBips = 4000;
-    //     terms.lender = LENDER2_ADDRESS;
-    //     terms.totalAmount = 5e18;
-    //     bytes32 newTermsHash = submitLender2Terms();
+        offer.terms.interestRateBips = 6000;
+        offer.terms.lender = LENDER2_ADDRESS;
+        offer.deadline = uint40(block.timestamp + 1 days);
 
-    //     vm.expectRevert("NEW_TERMS_AT_CAPACITY");
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.instantLenderRefinance(borrowHash, newTermsHash);
-    // }
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeOfferDigest(offer));
 
-    // /*//////////////////////////////////////////////////////////////
-    //                          AUCTION KICKOFF
-    // //////////////////////////////////////////////////////////////*/
+        uint256 borrowId = puree.newBorrow(offer, v, r, s, 3, 10e18);
 
-    // function testKickoffRefinancingAuction() public {
-    //     bytes32 termsHash = submitLenderTerms();
+        Borrow memory borrow = Borrow({
+            terms: offer.terms,
+            borrower: address(this),
+            nftId: 3,
+            lastComputedDebt: 10e18,
+            lastTouchedTime: uint40(block.timestamp),
+            auctionStartBlock: 0
+        });
 
-    //     bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+        vm.prank(LENDER2_ADDRESS);
+        vm.expectRevert("AT_CAPACITY");
+        puree.instantLenderRefinance(borrow, borrowId, oldOffer, v1, r1, s1);
+    }
 
-    //     assertEq(puree.getAuctionStartBlock(borrowHash), 0);
+    /*//////////////////////////////////////////////////////////////
+                             AUCTION KICKOFF
+    //////////////////////////////////////////////////////////////*/
 
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.kickoffRefinancingAuction(borrowHash);
+    function testKickoffRefinancingAuction() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
-    //     assertEq(puree.getAuctionStartBlock(borrowHash), block.number);
-    // }
+        assertEq(puree.getBorrowHash(borrowId), keccak256(abi.encode(borrow)));
 
-    // function testKickoffRefinancingAuction_invalidBorrow() public {
-    //     bytes32 termsHash = submitLenderTerms();
+        assertEq(borrow.auctionStartBlock, 0);
 
-    //     bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrow, borrowId);
 
-    //     borrowHash = bytes32(uint256(borrowHash) + 1);
+        assertEq(
+            puree.getBorrowHash(borrowId),
+            keccak256(
+                abi.encode(
+                    Borrow({
+                        terms: borrow.terms,
+                        borrower: borrow.borrower,
+                        nftId: borrow.nftId,
+                        lastComputedDebt: borrow.lastComputedDebt,
+                        lastTouchedTime: borrow.lastTouchedTime,
+                        auctionStartBlock: uint40(block.number)
+                    })
+                )
+            )
+        );
+    }
 
-    //     vm.expectRevert("NOT_LENDER");
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.kickoffRefinancingAuction(borrowHash);
-    // }
+    // function testKickoffRefinancingAuction_notLender() public {
 
     // function testKickoffRefinancingAuction_alreadyActive() public {
     //     bytes32 termsHash = submitLenderTerms();

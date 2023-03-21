@@ -297,7 +297,7 @@ contract Puree {
             computeCurrentDebt(borrow.lastTouchedTime, borrow.lastComputedDebt, borrow.terms.interestRateBips);
 
         // Ensure the amount being borrowed is within the min and max set in the new terms.
-        require(debt >= offer.terms.minAmount && debt <= offer.terms.maxAmount, "INVALID_AMOUNT");
+        require(debt >= offer.terms.minAmount && debt <= offer.terms.maxAmount, "iNVALID_DEBT_AMOUNT");
 
         ///////////////////////////////////////////////////////////////
 
