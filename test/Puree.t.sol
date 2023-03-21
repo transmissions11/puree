@@ -481,7 +481,7 @@ contract PureeTest is Test {
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeOfferDigest(offer));
 
-        vm.expectRevert("iNVALID_DEBT_AMOUNT");
+        vm.expectRevert("INVALID_DEBT_AMOUNT");
         vm.prank(LENDER_ADDRESS);
         puree.instantLenderRefinance(borrow, borrowId, offer, v, r, s);
     }
