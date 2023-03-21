@@ -312,7 +312,7 @@ contract Puree {
                 // Get the total amount of the offer terms consumed.
                 uint256 consumed = getTotalAmountOfTermsConsumed[oldTermsHash];
 
-                // Lower the amount consumed by the debt amount being repaid,
+                // Lower the amount consumed by the debt amount being bought out,
                 // ensuring not to underflow if consumption would be lowered below 0.
                 getTotalAmountOfTermsConsumed[oldTermsHash] = consumed > debt ? consumed - debt : 0;
             }
@@ -430,8 +430,14 @@ contract Puree {
             bytes32 oldTermsHash = keccak256(abi.encode(borrow.terms));
             bytes32 newTermsHash = keccak256(abi.encode(offer.terms));
 
-            // Lower the consumption amount of the original terms by the debt.
-            getTotalAmountOfTermsConsumed[oldTermsHash] -= debt;
+            unchecked {
+                // Get the total amount of the offer terms consumed.
+                uint256 consumed = getTotalAmountOfTermsConsumed[oldTermsHash];
+
+                // Lower the amount consumed by the debt amount being bought out,
+                // ensuring not to underflow if consumption would be lowered below 0.
+                getTotalAmountOfTermsConsumed[oldTermsHash] = consumed > debt ? consumed - debt : 0;
+            }
 
             // Increase the consumed amount of the new terms by the debt, or revert if exceeds the capacity.
             require(offer.terms.totalAmount >= (getTotalAmountOfTermsConsumed[newTermsHash] += debt), "AT_CAPACITY");
