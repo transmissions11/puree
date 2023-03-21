@@ -227,9 +227,11 @@ contract Puree {
 
         /////////////////////////////////////////////////////////
 
-        // Lower the amount consumed by the amount being repaid,
-        // ensuring not to underflow if consumption would be lowered below 0.
-        getTotalAmountOfTermsConsumed[termsHash] = consumed > amt ? consumed - amt : 0;
+        unchecked {
+            // Lower the amount consumed by the amount being repaid,
+            // ensuring not to underflow if consumption would be lowered below 0.
+            getTotalAmountOfTermsConsumed[termsHash] = consumed > amt ? consumed - amt : 0;
+        }
 
         //////////////////////////////////////////////////////
 
