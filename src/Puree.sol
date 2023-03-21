@@ -503,6 +503,7 @@ contract Puree {
     /// @param lastTouchedTime The last time the debt was touched.
     /// @param lastComputedDebt The last computed debt.
     /// @param bips The yearly interest rate bips.
+    /// @dev Formula: https://www.desmos.com/calculator/l6omp0rwnh
     function computeCurrentDebt(uint40 lastTouchedTime, uint96 lastComputedDebt, uint32 bips)
         public
         view
@@ -517,6 +518,7 @@ contract Puree {
     /// auction could settle at currently given the auction's start block and duration.
     /// @param startBlock The block the auction started at.
     /// @param durBlocks The duration of the auction in blocks.
+    /// @dev Formula: https://www.desmos.com/calculator/7ef4rtuzsh
     function calcRefinancingAuctionRate(uint256 startBlock, uint32 durBlocks, uint32 oldRate)
         public
         view
