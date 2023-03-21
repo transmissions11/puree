@@ -412,6 +412,46 @@ contract PureeTest is Test {
         );
     }
 
+    function testInstantLenderRefinanceAfterTime() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
+
+        vm.warp(block.timestamp + 365 days);
+
+        offer.terms.interestRateBips = 4000;
+        offer.terms.lender = LENDER2_ADDRESS;
+        offer.deadline = uint40(block.timestamp + 1 days);
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(LENDER2_PK, puree.computeOfferDigest(offer));
+
+        vm.prank(LENDER_ADDRESS);
+        puree.instantLenderRefinance(borrow, borrowId, offer, v, r, s);
+
+        assertEq(puree.getTotalAmountOfTermsConsumed(keccak256(abi.encode(borrow.terms))), 0);
+        assertEq(puree.getTotalAmountOfTermsConsumed(keccak256(abi.encode(offer.terms))), 16.48721270700128146e18);
+
+        assertEq(weth.balanceOf(LENDER_ADDRESS), 506.48721270700128146e18);
+        assertEq(weth.balanceOf(LENDER2_ADDRESS), 483.51278729299871854e18);
+        assertEq(weth.balanceOf(address(this)), 510e18);
+
+        bytes32 borrowHash = puree.getBorrowHash(borrowId);
+
+        assertEq(
+            borrowHash,
+            keccak256(
+                abi.encode(
+                    Borrow({
+                        terms: offer.terms,
+                        borrower: borrow.borrower,
+                        nftId: borrow.nftId,
+                        lastComputedDebt: uint96(16.48721270700128146e18),
+                        lastTouchedTime: uint40(block.timestamp),
+                        auctionStartBlock: borrow.auctionStartBlock
+                    })
+                )
+            )
+        );
+    }
+
     function testInstantLenderRefinance_invalidBorrow() public {
         (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
