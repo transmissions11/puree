@@ -548,24 +548,45 @@ contract PureeTest is Test {
         );
     }
 
-    // function testKickoffRefinancingAuction_notLender() public {
+    function testKickoffRefinancingAuction_notLender() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
-    // function testKickoffRefinancingAuction_alreadyActive() public {
-    //     bytes32 termsHash = submitLenderTerms();
+        vm.expectRevert("NOT_LENDER");
+        puree.kickoffRefinancingAuction(borrow, borrowId);
+    }
 
-    //     bytes32 borrowHash = puree.newBorrow(termsHash, 1, 10e18);
+    function testKickoffRefinancingAuction_alreadyActive() public {
+        (Borrow memory borrow, uint256 borrowId) = newBorrow();
 
-    //     vm.prank(LENDER_ADDRESS);
-    //     puree.kickoffRefinancingAuction(borrowHash);
+        vm.prank(LENDER_ADDRESS);
+        puree.kickoffRefinancingAuction(borrow, borrowId);
 
-    //     vm.prank(LENDER_ADDRESS);
-    //     vm.expectRevert("AUCTION_ALREADY_STARTED");
-    //     puree.kickoffRefinancingAuction(borrowHash);
-    // }
+        assertEq(
+            puree.getBorrowHash(borrowId),
+            keccak256(
+                abi.encode(
+                    Borrow({
+                        terms: borrow.terms,
+                        borrower: borrow.borrower,
+                        nftId: borrow.nftId,
+                        lastComputedDebt: borrow.lastComputedDebt,
+                        lastTouchedTime: borrow.lastTouchedTime,
+                        auctionStartBlock: uint40(block.number)
+                    })
+                )
+            )
+        );
 
-    // /*//////////////////////////////////////////////////////////////
-    //                  REFINANCING AUCTION SETTLEMENT
-    // //////////////////////////////////////////////////////////////*/
+        borrow.auctionStartBlock = uint40(block.number);
+
+        vm.prank(LENDER_ADDRESS);
+        vm.expectRevert("AUCTION_ALREADY_STARTED");
+        puree.kickoffRefinancingAuction(borrow, borrowId);
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     REFINANCING AUCTION SETTLEMENT
+    //////////////////////////////////////////////////////////////*/
 
     // function testSettleRefinancingAuction() public {
     //     bytes32 oldTermsHash = submitLenderTerms();
@@ -810,9 +831,9 @@ contract PureeTest is Test {
     //     puree.settleRefinancingAuction(borrowHash, newTermsHash);
     // }
 
-    // /*//////////////////////////////////////////////////////////////
-    //                            LIQUIDATION
-    // //////////////////////////////////////////////////////////////*/
+    /*//////////////////////////////////////////////////////////////
+                               LIQUIDATION
+    //////////////////////////////////////////////////////////////*/
 
     // function testLiquidate() public {
     //     bytes32 termsHash = submitLenderTerms();
