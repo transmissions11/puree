@@ -89,8 +89,12 @@ contract Puree {
                                 USER DATA
     //////////////////////////////////////////////////////////////*/
 
+    /// @notice Maps users to their current nonce,
+    /// used to enable bulk canceling of loan offers.
     mapping(address => uint256) public getNonce;
 
+    /// @notice Allows a user to bump their nonce by a given amount.
+    /// @param n The amount to bump the nonce by.
     function bumpNonce(uint256 n) external {
         getNonce[msg.sender] += n;
     }
@@ -133,8 +137,6 @@ contract Puree {
 
         ///////////////////////////////////////////////////////////////////
 
-        // TODO: Can we just abi encode the args directly
-        // or do we have to do the struct layer first?
         getBorrowHash[borrowId = nextBorrowId++] = keccak256(
             abi.encode(
                 Borrow({
